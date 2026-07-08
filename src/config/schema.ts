@@ -110,6 +110,14 @@ export const SinkConfigSchema = z.discriminatedUnion("type", [
     batchSize: z.number().int().positive().default(20),
     timeoutMs: z.number().int().positive().default(5_000),
   }),
+  z.object({
+    type: z.literal("otlp"),
+    /** Base OTLP/HTTP endpoint, e.g. `http://localhost:4318` (the `/v1/logs` path is appended). */
+    endpoint: z.string().url(),
+    headers: z.record(z.string(), z.string()).optional(),
+    batchSize: z.number().int().positive().default(50),
+    timeoutMs: z.number().int().positive().default(5_000),
+  }),
 ]);
 export type SinkConfig = z.infer<typeof SinkConfigSchema>;
 

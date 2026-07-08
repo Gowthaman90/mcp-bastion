@@ -8,10 +8,12 @@ import type { AuditSink } from "../types.js";
 import { ConsoleSink } from "./console.js";
 import { FileSink } from "./file.js";
 import { WebhookSink } from "./webhook.js";
+import { OtlpSink } from "./otlp.js";
 
 export { ConsoleSink } from "./console.js";
 export { FileSink } from "./file.js";
 export { WebhookSink } from "./webhook.js";
+export { OtlpSink, toOtlpLogs } from "./otlp.js";
 
 /** Instantiate the configured sinks. */
 export function createSinks(configs: readonly SinkConfig[]): AuditSink[] {
@@ -24,6 +26,13 @@ export function createSinks(configs: readonly SinkConfig[]): AuditSink[] {
       case "webhook":
         return new WebhookSink({
           url: cfg.url,
+          batchSize: cfg.batchSize,
+          timeoutMs: cfg.timeoutMs,
+        });
+      case "otlp":
+        return new OtlpSink({
+          endpoint: cfg.endpoint,
+          headers: cfg.headers,
           batchSize: cfg.batchSize,
           timeoutMs: cfg.timeoutMs,
         });

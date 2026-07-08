@@ -46,6 +46,7 @@ export {
   ConsoleSink,
   FileSink,
   WebhookSink,
+  OtlpSink,
   frameworksFor,
   buildComplianceReport,
   chainHash,

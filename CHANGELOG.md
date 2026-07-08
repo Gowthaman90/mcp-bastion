@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **OTLP audit sink** — export audit events as OpenTelemetry logs (OTLP/HTTP JSON) to an OpenTelemetry
+  Collector, unlocking any downstream backend (SIEM, cloud logging, object storage). Configure with a
+  sink of `{ "type": "otlp", "endpoint": "http://localhost:4318" }`.
+
 ## [0.1.0] - 2026-07-07
 
 Initial public release. A client-agnostic reliability + security proxy for the Model Context Protocol,
