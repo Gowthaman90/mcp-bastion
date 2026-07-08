@@ -48,5 +48,5 @@ spanning three layers plus dual transports.
 - Strict TypeScript, layered architecture (`config` / `core` / `security` / `audit` / `proxy` /
   `observability` / `internal`), ESLint + Prettier, unit + end-to-end tests, and CI.
 
-[Unreleased]: https://github.com/mcp-bastion/mcp-bastion/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/mcp-bastion/mcp-bastion/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Gowthaman90/mcp-bastion/releases/tag/v0.1.0
