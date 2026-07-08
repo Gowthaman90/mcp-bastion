@@ -27,6 +27,8 @@ Desktop, or any MCP-compliant agent) and your MCP servers. It is **client-agnost
 any compliant client through configuration alone, with zero client-specific code — and **non-invasive**:
 your servers run unchanged, and removing Bastion is a one-line config revert.
 
+📖 **Launch story:** [Medium](https://medium.com/p/e74f638e9e15) · [dev.to](https://dev.to/gowthaman90/the-mcp-reliability-security-gap-and-an-open-source-proxy-that-fills-it-3ppo)
+
 ## Contents
 
 - [Why](#why)
@@ -184,7 +186,7 @@ only standard MCP calls:
 | `audit.enabled`                | boolean                    | `false`              | Record an audit event for every tool call.           |
 | `audit.includeArgs`            | `none`\|`redacted`\|`full` | `none`               | How tool arguments are recorded.                     |
 | `audit.tamperEvident`          | boolean                    | `false`              | Hash-chain events so tampering is detectable.        |
-| `audit.sinks`                  | array                      | console              | Destinations: `console`, `file`, `webhook`.          |
+| `audit.sinks`                  | array                      | console              | Destinations: `console`, `file`, `webhook`, `otlp`.  |
 | `servers.<name>.transport`     | `stdio` \| `http`          | `stdio`              | Local subprocess or remote endpoint.                 |
 | `servers.<name>.url`           | string                     | —                    | Remote MCP URL (required for `http`).                |
 | `servers.<name>.headers`       | map                        | —                    | Headers for `http` upstreams (e.g. `Authorization`). |
@@ -238,9 +240,9 @@ including calls blocked by the security layer:
 }
 ```
 
-- **Pluggable sinks.** `console` (stderr JSONL), `file` (JSONL append), and `webhook` (batched POST —
-  point it at an OpenTelemetry Collector to fan out to SIEM/cloud). The sink interface makes new
-  destinations additive.
+- **Pluggable sinks.** `console` (stderr JSONL), `file` (JSONL append), `webhook` (batched POST), and
+  `otlp` (native OpenTelemetry logs export — point it at an OTel Collector to fan out to any SIEM/cloud
+  backend). The sink interface makes new destinations additive.
 - **Compliance mapping.** Each event is mapped to **NIST AI RMF** functions and **OWASP LLM Top 10**
   categories; `bastion__compliance` returns an aggregate report of recent activity.
 - **Tamper-evidence.** With `tamperEvident`, events are hash-chained; the exported `verifyChain` helper

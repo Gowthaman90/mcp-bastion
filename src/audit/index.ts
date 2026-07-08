@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 export { AuditEngine } from "./engine.js";
-export { createSinks, ConsoleSink, FileSink, WebhookSink } from "./sinks/index.js";
+export { createSinks, ConsoleSink, FileSink, WebhookSink, OtlpSink } from "./sinks/index.js";
 export { frameworksFor, buildComplianceReport } from "./compliance.js";
 export type { ComplianceReport } from "./compliance.js";
 export { chainHash, verifyChain } from "./chain.js";
