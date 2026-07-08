@@ -45,13 +45,13 @@
   ],
   "license": "Apache-2.0",
   "author": "mcp-bastion contributors",
-  "homepage": "https://github.com/mcp-bastion/mcp-bastion#readme",
+  "homepage": "https://github.com/Gowthaman90/mcp-bastion#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mcp-bastion/mcp-bastion.git"
+    "url": "git+https://github.com/Gowthaman90/mcp-bastion.git"
   },
   "bugs": {
-    "url": "https://github.com/mcp-bastion/mcp-bastion/issues"
+    "url": "https://github.com/Gowthaman90/mcp-bastion/issues"
   },
   "publishConfig": {
     "access": "public"
