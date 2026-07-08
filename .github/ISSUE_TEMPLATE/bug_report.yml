@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a problem with mcp-bastion
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to file a bug! Please fill out the sections below.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps (and config, with secrets redacted) to reproduce.
+      placeholder: |
+        1. bastion.config.json contains …
+        2. Run …
+        3. Observe …
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      description: e.g. Claude Code, Cursor, Cline, Windsurf, custom
+    validations:
+      required: false
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: mcp-bastion version, Node.js version, OS
+      placeholder: "bastion 0.1.0, node 20.11.0, macOS 14"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Bastion logs (stderr). Set BASTION_LOG_LEVEL=debug for more detail. Redact secrets.
+      render: shell
+    validations:
+      required: false
