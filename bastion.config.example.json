@@ -1,0 +1,53 @@
+{
+  "servers": {
+    "filesystem": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
+    },
+    "github": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxx" }
+    },
+    "remote": {
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer TOKEN" }
+    }
+  },
+  "listen": {
+    "mode": "stdio",
+    "host": "127.0.0.1",
+    "port": 3000,
+    "path": "/mcp"
+  },
+  "reconnect": {
+    "auto": true,
+    "maxRetries": 10,
+    "initialBackoffMs": 500,
+    "maxBackoffMs": 30000
+  },
+  "healthCheck": {
+    "enabled": true,
+    "intervalMs": 30000,
+    "timeoutMs": 5000
+  },
+  "namespace": {
+    "strategy": "prefix",
+    "separator": "__"
+  },
+  "security": {
+    "pinTools": true,
+    "onRugPull": "block",
+    "inspectDescriptions": true,
+    "onPoisoning": "warn"
+  },
+  "audit": {
+    "enabled": false,
+    "includeArgs": "none",
+    "tamperEvident": false,
+    "sinks": [{ "type": "console" }]
+  }
+}
