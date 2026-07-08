@@ -41,6 +41,7 @@ your servers run unchanged, and removing Bastion is a one-line config revert.
 - [Transports](#transports)
 - [Runtime security](#runtime-security)
 - [Audit & compliance](#audit--compliance)
+- [Troubleshooting / FAQ](#troubleshooting--faq)
 - [Client setup](#client-setup)
 - [Architecture](#architecture)
 - [Development](#development)
@@ -249,6 +250,34 @@ including calls blocked by the security layer:
   detects any retroactive edit or deletion.
 - **Redaction.** Arguments are omitted by default; set `includeArgs` to `redacted` to keep structure
   while masking sensitive keys.
+
+## Troubleshooting / FAQ
+
+### Why do tools appear as `server__tool`?
+
+The default namespace strategy prefixes each upstream tool with its server name, using `__` as the
+separator, so tools from different servers cannot collide or shadow each other. Configure
+`namespace.strategy` and `namespace.separator` in [Configuration](#configuration) if you need a
+different naming scheme.
+
+### A tool is blocked as a rug pull. How do I re-approve it?
+
+Use `bastion__security` to inspect the changed tool definition first. If the change is expected, call
+`bastion__approve` with the original server and tool name, for example
+`{ "server": "github", "tool": "create_issue" }`. See [Runtime security](#runtime-security) for the
+tool-pinning behavior and approval flow.
+
+### How do I enable the audit log?
+
+Set `audit.enabled` to `true` and choose one or more `audit.sinks`, such as `console`, `file`,
+`webhook`, or `otlp`. The [Audit & compliance](#audit--compliance) section shows a complete config
+snippet, including argument redaction and tamper-evident hash chaining.
+
+### Why does nothing appear on stdout?
+
+For stdio transport, stdout is reserved for MCP protocol messages. Bastion sends logs and console
+audit events to stderr on purpose so logging cannot corrupt the client connection. Use a file,
+webhook, or OTLP audit sink if you need logs outside the terminal.
 
 ## Client setup
 
