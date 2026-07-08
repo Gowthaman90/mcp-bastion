@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 384" width="760" height="384" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14">
+  <rect x="0.5" y="0.5" width="759" height="383" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <rect x="0.5" y="0.5" width="759" height="34" rx="10" fill="#161b22"/>
+  <rect x="0.5" y="24" width="759" height="11" fill="#161b22"/>
+  <circle cx="22" cy="17" r="6" fill="#ff5f56"/>
+  <circle cx="42" cy="17" r="6" fill="#ffbd2e"/>
+  <circle cx="62" cy="17" r="6" fill="#27c93f"/>
+  <text x="380" y="22" text-anchor="middle" fill="#8b949e" font-size="12.5">mcp-bastion — kill &amp; recover</text>
+
+  <text x="24" y="68" fill="#e6edf3"><tspan fill="#58a6ff">$</tspan> npx mcp-bastion --config bastion.config.json</text>
+
+  <circle cx="30" cy="96" r="5" fill="#3fb950"/>
+  <text x="44" y="101" fill="#3fb950">demo   connected      (2 tools)</text>
+  <text x="44" y="127" fill="#8b949e">↳ tool call: echo → "hello"   <tspan fill="#3fb950">OK</tspan></text>
+
+  <text x="24" y="161" fill="#d29922">‼ the MCP server crashes mid-session…</text>
+
+  <circle cx="30" cy="187" r="5" fill="#f85149"/>
+  <text x="44" y="192" fill="#f85149">demo   reconnecting   (2 tools)</text>
+  <text x="44" y="218" fill="#f85149">↳ agent retries → "temporarily unavailable —</text>
+  <text x="60" y="240" fill="#f85149">call bastion__reconnect to recover"</text>
+
+  <text x="24" y="274" fill="#58a6ff">↻ auto-reconnecting with backoff…</text>
+
+  <circle cx="30" cy="300" r="5" fill="#3fb950"/>
+  <text x="44" y="305" fill="#3fb950">demo   connected      (2 tools)</text>
+  <text x="44" y="331" fill="#3fb950">↳ agent retries → "hello"   <tspan fill="#e6edf3" font-weight="bold">✓ recovered — no human involved</tspan></text>
+
+  <text x="24" y="365" fill="#484f58" font-size="12">The agent detected the dead server and healed it on its own.</text>
+</svg>

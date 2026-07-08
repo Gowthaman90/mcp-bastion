@@ -6,12 +6,17 @@
 
 _Self-healing connections, runtime tool-security, and a compliance-mapped audit trail for your MCP servers._
 
+[![npm version](https://img.shields.io/npm/v/mcp-bastion.svg?color=cb3837&logo=npm)](https://www.npmjs.com/package/mcp-bastion)
+[![npm downloads](https://img.shields.io/npm/dm/mcp-bastion.svg?color=cb3837)](https://www.npmjs.com/package/mcp-bastion)
+[![CI](https://github.com/Gowthaman90/mcp-bastion/actions/workflows/ci.yml/badge.svg)](https://github.com/Gowthaman90/mcp-bastion/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](https://www.typescriptlang.org/)
-[![Code style: Prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg)](https://prettier.io)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
-[![Status](https://img.shields.io/badge/status-early%20preview-orange.svg)](#roadmap)
+
+<br/>
+
+<img src="./assets/demo.svg" alt="mcp-bastion: an MCP server crashes mid-session and the agent recovers it automatically" width="760">
 
 </div>
 
