@@ -27,6 +27,8 @@ Desktop, or any MCP-compliant agent) and your MCP servers. It is **client-agnost
 any compliant client through configuration alone, with zero client-specific code — and **non-invasive**:
 your servers run unchanged, and removing Bastion is a one-line config revert.
 
+📦 **Package:** [`mcp-bastion` on npm](https://www.npmjs.com/package/mcp-bastion)
+
 📖 **Launch story:** [Medium](https://medium.com/p/e74f638e9e15) · [dev.to](https://dev.to/gowthaman90/the-mcp-reliability-security-gap-and-an-open-source-proxy-that-fills-it-3ppo)
 
 ## Contents
@@ -101,6 +103,9 @@ only per-client difference is where you put a few lines of config.
   unit + end-to-end tests.
 
 ## Quick start
+
+Bastion is published on npm as [`mcp-bastion`](https://www.npmjs.com/package/mcp-bastion) — the
+`npx` command below fetches it automatically, so there's nothing to install first.
 
 **1. Add Bastion to your client**, pointing it at a config file:
 
