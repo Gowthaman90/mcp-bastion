@@ -96,6 +96,27 @@ export const SecurityConfigSchema = z
      * Defaults to `warn` because heuristics can produce false positives.
      */
     onPoisoning: z.enum(["block", "warn"]).default("warn"),
+    /**
+     * Scan tool *results* (not just definitions) for injected instructions and
+     * exfiltration signals — defends the response-handling stage, where a server can
+     * smuggle a payload back through an otherwise-benign tool.
+     */
+    scanResponses: z.boolean().default(true),
+    /**
+     * What to do when a tool result trips a high-severity heuristic. Defaults to
+     * `warn`, mirroring `onPoisoning`, since the same heuristics apply.
+     */
+    onResponse: z.enum(["block", "warn"]).default("warn"),
+    /**
+     * Validate each tool call's arguments against the tool's declared `inputSchema`
+     * — flags undeclared parameters (smuggling) and type/enum violations (validation bypass).
+     */
+    validateArguments: z.boolean().default(true),
+    /**
+     * What to do on an argument/schema violation. Deterministic and low-false-positive,
+     * but defaults to `warn` to stay non-breaking; set to `block` to enforce.
+     */
+    onSchemaViolation: z.enum(["block", "warn"]).default("warn"),
   })
   .default({});
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;

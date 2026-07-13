@@ -31,6 +31,15 @@ export function frameworksFor(
     nist.add("MANAGE");
     owasp.add("LLM01: Prompt Injection");
   }
+  if (decision === "blocked_response") {
+    nist.add("MANAGE");
+    owasp.add("LLM05: Improper Output Handling");
+  }
+  if (decision === "blocked_schema") {
+    nist.add("MANAGE");
+    owasp.add("LLM05: Improper Output Handling");
+    owasp.add("LLM06: Excessive Agency");
+  }
 
   return { nistAiRmf: [...nist], owaspLlm: [...owasp] };
 }

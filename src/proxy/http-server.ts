@@ -20,6 +20,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import type { UpstreamManager } from "../core/index.js";
 import { logger } from "../observability/index.js";
+import { checkRequestOrigin } from "../security/index.js";
 import { buildBastionServer } from "./bastion-server.js";
 
 /** Options for the HTTP listener. */
@@ -55,6 +56,19 @@ export async function startHttpServer(
   });
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Reject a foreign Origin targeting a loopback listener (DNS-rebinding defense). Fires only when
+    // the request Host is loopback, so legitimate remote deployments (bound to a public host) are
+    // unaffected. Non-browser clients send no Origin and pass through.
+    const originFindings = checkRequestOrigin(req.headers.host, req.headers.origin);
+    if (originFindings.length > 0) {
+      logger.warn(
+        { host: req.headers.host, origin: req.headers.origin },
+        "blocked cross-origin request to loopback listener (possible DNS rebinding)",
+      );
+      res.writeHead(403).end("Cross-origin request blocked");
+      return;
+    }
+
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     if (url.pathname !== opts.path) {
       res.writeHead(404).end();

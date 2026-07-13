@@ -50,8 +50,14 @@ export interface ToolCallContext {
   definitionHash?: string;
   /** Poisoning findings on the tool's current definition. */
   findings?: SecurityFinding[];
+  /** Heuristic findings on the tool's *result* (response-handling stage). */
+  responseFindings?: SecurityFinding[];
   /** Set by a security interceptor when it blocks the call. */
-  securityDecision?: "blocked_rug_pull" | "blocked_poisoning";
+  securityDecision?:
+    | "blocked_rug_pull"
+    | "blocked_poisoning"
+    | "blocked_response"
+    | "blocked_schema";
 }
 
 /** Continuation that invokes the next interceptor (or the upstream call). */

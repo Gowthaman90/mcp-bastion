@@ -11,7 +11,12 @@ import type { Severity } from "../security/index.js";
 export const AUDIT_SCHEMA_VERSION = 1;
 
 /** The security decision recorded for a tool call. */
-export type AuditDecision = "allowed" | "blocked_rug_pull" | "blocked_poisoning";
+export type AuditDecision =
+  | "allowed"
+  | "blocked_rug_pull"
+  | "blocked_poisoning"
+  | "blocked_response"
+  | "blocked_schema";
 
 /** The observed outcome of a tool call. */
 export type AuditOutcome = "ok" | "error" | "blocked";

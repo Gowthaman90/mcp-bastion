@@ -9,15 +9,34 @@
  *
  * @packageDocumentation
  */
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import type { SecurityConfig } from "../config/index.js";
 import { ControlAction, controlToolName } from "../core/constants.js";
 import { textResult } from "../internal/index.js";
 import { logger, type Logger } from "../observability/index.js";
-import { hasSeverityAtLeast } from "./poisoning.js";
+import { hasSeverityAtLeast, scanText } from "./poisoning.js";
+import { validateArguments } from "./schema.js";
 import { ToolRegistry } from "./tool-registry.js";
 import type { Interceptor, ToolSecurityReport } from "./types.js";
+
+/** Stringify tool-call arguments for heuristic scanning; never throws. */
+function safeStringify(args: unknown): string {
+  try {
+    return JSON.stringify(args ?? {});
+  } catch {
+    return "";
+  }
+}
+
+/** Concatenate the text blocks of a tool result for heuristic scanning. */
+function resultText(result: CallToolResult): string {
+  const content = (result.content ?? []) as Array<{ type?: string; text?: string }>;
+  return content
+    .filter((c) => c.type === "text" && typeof c.text === "string")
+    .map((c) => c.text)
+    .join("\n");
+}
 
 export class SecurityEngine {
   private readonly registry = new ToolRegistry();
@@ -53,6 +72,8 @@ export class SecurityEngine {
     const interceptors: Interceptor[] = [];
     if (this.policy.pinTools) interceptors.push(this.rugPullInterceptor());
     if (this.policy.inspectDescriptions) interceptors.push(this.poisoningInterceptor());
+    if (this.policy.validateArguments) interceptors.push(this.argumentInterceptor());
+    if (this.policy.scanResponses) interceptors.push(this.responseScanInterceptor());
     return interceptors;
   }
 
@@ -116,6 +137,81 @@ export class SecurityEngine {
         }
       }
       return next();
+    };
+  }
+
+  /**
+   * Inspects a call's outgoing arguments two ways before they reach the server:
+   *   - schema validation — undeclared parameters (smuggling) and type/enum violations (bypass); and
+   *   - content scanning — the same heuristics used on descriptions, applied to argument *values*,
+   *     to catch a call that reads a sensitive source (e.g. `~/.ssh/id_rsa`, `.env`) as the first
+   *     leg of a cross-tool exfiltration.
+   */
+  private argumentInterceptor(): Interceptor {
+    return (ctx, next) => {
+      const state = this.registry.state(ctx.server, ctx.toolName);
+      const findings = [
+        ...validateArguments(state?.inputSchema, ctx.args),
+        ...scanText(safeStringify(ctx.args)),
+      ];
+      if (findings.length === 0) return next();
+
+      ctx.findings = [...(ctx.findings ?? []), ...findings];
+      this.log.warn(
+        { server: ctx.server, tool: ctx.toolName, rules: findings.map((f) => f.rule) },
+        "tool arguments failed inspection",
+      );
+
+      if (this.policy.onSchemaViolation === "block") {
+        ctx.securityDecision = "blocked_schema";
+        const rules = findings.map((f) => f.rule).join(", ");
+        return Promise.resolve(
+          textResult(
+            `Blocked by mcp-bastion: the call to tool "${ctx.toolName}" on server "${ctx.server}" ` +
+              `failed argument validation (${rules}). The arguments do not match the tool's declared ` +
+              `input schema — a possible parameter-smuggling or validation-bypass attempt. Set ` +
+              `security.onSchemaViolation to "warn" if this is a false positive.`,
+            true,
+          ),
+        );
+      }
+      return next();
+    };
+  }
+
+  /**
+   * Scans a tool's *result* for injected instructions / exfiltration signals. Runs after
+   * the upstream call so it can inspect what the server actually returned — the
+   * response-handling stage that definition-only checks miss.
+   */
+  private responseScanInterceptor(): Interceptor {
+    return async (ctx, next) => {
+      const result = await next();
+      // Don't second-guess a call another interceptor already blocked.
+      if (ctx.securityDecision) return result;
+
+      const findings = scanText(resultText(result));
+      if (findings.length === 0) return result;
+
+      ctx.responseFindings = findings;
+      ctx.findings = [...(ctx.findings ?? []), ...findings];
+      this.log.warn(
+        { server: ctx.server, tool: ctx.toolName, rules: findings.map((f) => f.rule) },
+        "tool result flagged by response heuristics",
+      );
+
+      if (this.policy.onResponse === "block" && hasSeverityAtLeast(findings, "high")) {
+        ctx.securityDecision = "blocked_response";
+        const rules = findings.map((f) => f.rule).join(", ");
+        return textResult(
+          `Blocked by mcp-bastion: the result from tool "${ctx.toolName}" on server ` +
+            `"${ctx.server}" was flagged as potentially malicious (${rules}) — a possible injected ` +
+            `instruction or data-exfiltration attempt in the response. Set security.onResponse to ` +
+            `"warn" if this is a false positive.`,
+          true,
+        );
+      }
+      return result;
     };
   }
 }
