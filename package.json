@@ -1,6 +1,6 @@
 {
   "name": "mcp-bastion",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Reliability + security proxy for the Model Context Protocol (MCP): self-healing connections, runtime tool-security (rug-pull/poisoning detection), and a compliance-mapped audit trail.",
   "type": "module",
   "bin": {
@@ -34,14 +34,29 @@
   "keywords": [
     "mcp",
     "model-context-protocol",
+    "mcp-server",
+    "mcp-proxy",
+    "mcp-gateway",
+    "mcp-security",
     "proxy",
+    "gateway",
     "ai",
     "llm",
     "agent",
     "agentic",
+    "ai-security",
+    "llm-security",
     "security",
+    "guardrails",
     "reliability",
-    "reconnect"
+    "reconnect",
+    "audit",
+    "audit-log",
+    "observability",
+    "compliance",
+    "nist-ai-rmf",
+    "owasp",
+    "tool-poisoning"
   ],
   "license": "Apache-2.0",
   "author": "mcp-bastion contributors",

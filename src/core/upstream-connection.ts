@@ -15,6 +15,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import type { ReconnectConfig, ServerConfig } from "../config/index.js";
 import { UpstreamDisconnectedError } from "../errors.js";
+import { checkTransportSecurity } from "../security/index.js";
 import { buildEnv, withTimeout } from "../internal/index.js";
 import { logger } from "../observability/index.js";
 import { BASTION_NAME, BASTION_VERSION } from "./constants.js";
@@ -127,6 +128,14 @@ export class UpstreamConnection {
         { server: this.name, url: this.config.url },
         "upstream reached over HTTP without an authentication header",
       );
+    }
+    if (this.config.transport === "http") {
+      for (const finding of checkTransportSecurity(this.config.url)) {
+        logger.warn(
+          { server: this.name, url: this.config.url, rule: finding.rule },
+          "insecure upstream transport: plaintext HTTP to a remote host (MITM exposure)",
+        );
+      }
     }
 
     const transport = this.createTransport();

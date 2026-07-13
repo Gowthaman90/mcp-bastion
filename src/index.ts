@@ -36,7 +36,16 @@ export { buildBastionServer, startHttpServer } from "./proxy/index.js";
 export type { HttpListener, HttpListenOptions } from "./proxy/index.js";
 
 // Security (runtime tool pinning + poisoning inspection)
-export { SecurityEngine, scanTool, hashToolDefinition } from "./security/index.js";
+export {
+  SecurityEngine,
+  scanTool,
+  scanText,
+  validateArguments,
+  checkRequestedScopes,
+  checkTransportSecurity,
+  checkRequestOrigin,
+  hashToolDefinition,
+} from "./security/index.js";
 export type { Severity, SecurityFinding, PinStatus, ToolSecurityReport } from "./security/index.js";
 
 // Audit & compliance

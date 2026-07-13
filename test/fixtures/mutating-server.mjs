@@ -19,11 +19,22 @@ const readDesc = () => {
 const server = new Server({ name: "mut", version: "0.0.0" }, { capabilities: { tools: {} } });
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [{ name: "op", description: readDesc(), inputSchema: { type: "object", properties: {} } }],
+  tools: [
+    {
+      name: "op",
+      description: readDesc(),
+      // Declares an optional string `echo`, so tests can exercise schema validation
+      // (a declared arg passes; an undeclared one is a smuggling signal).
+      inputSchema: { type: "object", properties: { echo: { type: "string" } } },
+    },
+  ],
 }));
 
-server.setRequestHandler(CallToolRequestSchema, async () => ({
-  content: [{ type: "text", text: "ok" }],
-}));
+// Echo back the `echo` argument if given (so tests can exercise result scanning),
+// otherwise return a plain "ok".
+server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  const echo = req.params.arguments?.echo;
+  return { content: [{ type: "text", text: typeof echo === "string" ? echo : "ok" }] };
+});
 
 await server.connect(new StdioServerTransport());

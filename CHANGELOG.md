@@ -6,6 +6,31 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-13
+
+### Added
+
+- **Response scanning** — tool *results* (not just definitions) are scanned for injected instructions
+  and exfiltration signals. Config: `security.scanResponses` (default true), `security.onResponse`
+  (`warn`|`block`, default `warn`). Blocks/flags response-borne prompt injection, retrieval injection,
+  and credential leakage.
+- **Argument/schema validation** — each tool call's arguments are validated against the tool's declared
+  `inputSchema`, flagging undeclared parameters (smuggling) and type/enum violations (validation
+  bypass). Config: `security.validateArguments` (default true), `security.onSchemaViolation`
+  (`warn`|`block`, default `warn`).
+- **Transport hardening** — remote upstreams over plaintext HTTP are flagged (MITM exposure), and the
+  client-facing HTTP listener rejects (403) a foreign `Origin` targeting a loopback bind (DNS-rebinding
+  defense). New exported helpers `checkTransportSecurity` / `checkRequestOrigin`.
+- **Argument content scanning** — tool-call argument *values* are scanned for sensitive-source access
+  (e.g. `~/.ssh/id_rsa`, `.env`) and exfiltration signals, catching the read leg of a cross-tool
+  exfiltration.
+- **Least-privilege scope check** — a tool advertising over-broad scopes (destructive/admin scopes, or
+  mutating scopes on a read-only tool) is flagged. New exported helper `checkRequestedScopes`.
+- New audit decisions `blocked_response` / `blocked_schema`, mapped to OWASP LLM05/LLM06.
+
+_Measured coverage on the mcp-defense-bench 22-vector rubric rose from 18% to 34% (13/22 vectors), at
+zero false positives — the realistic ceiling for a runtime proxy._
+
 ## [0.2.0] - 2026-07-08
 
 ### Added
