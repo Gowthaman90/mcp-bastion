@@ -13,7 +13,8 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { SecurityFinding } from "./types.js";
 
 /** Scope tokens that are dangerous regardless of the tool's purpose. */
-const ALWAYS_DANGEROUS = /(^|[.:_\-/])(delete|remove|drop|admin|superuser|manage|all|\*)$|(^|[.:_\-/])\*$/i;
+const ALWAYS_DANGEROUS =
+  /(^|[.:_\-/])(delete|remove|drop|admin|superuser|manage|all|\*)$|(^|[.:_\-/])\*$/i;
 /** Scope tokens that are dangerous only for a read-oriented tool. */
 const MUTATING = /(^|[.:_\-/])(write|send|create|update|execute|exec)$/i;
 /** A tool that presents itself as read-only. */

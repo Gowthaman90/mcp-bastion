@@ -18,7 +18,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
-- **Response scanning** — tool *results* (not just definitions) are scanned for injected instructions
+- **Response scanning** — tool _results_ (not just definitions) are scanned for injected instructions
   and exfiltration signals. Config: `security.scanResponses` (default true), `security.onResponse`
   (`warn`|`block`, default `warn`). Blocks/flags response-borne prompt injection, retrieval injection,
   and credential leakage.
@@ -29,7 +29,7 @@ All notable changes to this project are documented here. The format is based on
 - **Transport hardening** — remote upstreams over plaintext HTTP are flagged (MITM exposure), and the
   client-facing HTTP listener rejects (403) a foreign `Origin` targeting a loopback bind (DNS-rebinding
   defense). New exported helpers `checkTransportSecurity` / `checkRequestOrigin`.
-- **Argument content scanning** — tool-call argument *values* are scanned for sensitive-source access
+- **Argument content scanning** — tool-call argument _values_ are scanned for sensitive-source access
   (e.g. `~/.ssh/id_rsa`, `.env`) and exfiltration signals, catching the read leg of a cross-tool
   exfiltration.
 - **Least-privilege scope check** — a tool advertising over-broad scopes (destructive/admin scopes, or

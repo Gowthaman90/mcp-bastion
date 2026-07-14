@@ -28,7 +28,9 @@ describe("least-privilege scope check", () => {
 
   it("always flags admin/wildcard regardless of tool", () => {
     expect(checkRequestedScopes(["*"], { name: "x", description: "x" }).length).toBeGreaterThan(0);
-    expect(checkRequestedScopes(["org.admin"], { name: "x", description: "x" }).length).toBeGreaterThan(0);
+    expect(
+      checkRequestedScopes(["org.admin"], { name: "x", description: "x" }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("returns nothing for an empty or missing scope list", () => {
