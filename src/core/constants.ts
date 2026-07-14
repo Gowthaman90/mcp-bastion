@@ -12,8 +12,8 @@
 /** Server name Bastion reports as, and the client identity it uses upstream. */
 export const BASTION_NAME = "mcp-bastion";
 
-/** Current Bastion version. Keep in sync with `package.json` on release. */
-export const BASTION_VERSION = "0.2.0";
+/** Current Bastion version. Kept in sync with `package.json` — enforced by test/version.test.ts. */
+export const BASTION_VERSION = "0.3.1";
 
 /** Namespace under which Bastion exposes its own control tools. */
 export const CONTROL_NAMESPACE = "bastion";

@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-13
+
+### Fixed
+
+- **Reported version** — the CLI and MCP handshake now report the correct version (was pinned at an
+  older value via a hardcoded constant). A test now asserts `BASTION_VERSION` matches `package.json`
+  so it can't drift again.
+
 ## [0.3.0] - 2026-07-13
 
 ### Added
