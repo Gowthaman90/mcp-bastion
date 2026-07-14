@@ -13,21 +13,21 @@ zero false positives. Last updated 2026-07-13._
 
 ## The mapping
 
-| # | Threat / check | Bastion mechanism | Action | Layer | STRIDE | NIST AI RMF | OWASP LLM 2025 | OWASP Agentic 2026 |
-|--:|---|---|---|---|---|---|---|---|
-| 1 | Tool poisoning | Description scanning (`scanTool`) | 🟡 detect | tool | Tampering, EoP | MAP, MEASURE, MANAGE | LLM01, LLM06 | ASI01, ASI02 |
-| 2 | Tool shadowing / name collision | Cross-server name-collision check | 🟡 detect | client | Spoofing, Tampering | MAP, MANAGE | LLM01, LLM03 | ASI01, ASI04 |
-| 3 | Rug pull (definition mutation) | Definition pinning + hash compare | 🟢 **enforce** | tool | Tampering | MEASURE, MANAGE | LLM03, LLM06 | ASI04 |
-| 4 | Out-of-scope parameter injection | Argument schema validation | 🟡 detect | tool | Tampering, EoP | MEASURE, MANAGE | LLM05, LLM06 | ASI02 |
-| 5 | Prompt injection via tool results | Response content scanning | 🟡 detect | tool | Tampering | MEASURE, MANAGE | LLM01, LLM05 | ASI01 |
-| 6 | Indirect / retrieval injection | Response content scanning | 🟡 detect | tool | Tampering | MEASURE, MANAGE | LLM01 | ASI01 |
-| 7 | Cross-tool exfiltration (confused deputy) | Sensitive-argument scanning | 🟡 detect | client | InfoDisclosure, EoP | MAP, MEASURE, MANAGE | LLM02, LLM06 | ASI02, ASI03 |
-| 8 | Schema / validation bypass | Argument schema validation | 🟡 detect | server | Tampering, EoP | MEASURE, MANAGE | LLM05 | ASI02 |
-| 9 | Man-in-the-middle (transport) | Plaintext-HTTP transport check | 🟡 detect | transport | Tampering, InfoDisclosure, Spoofing | MANAGE | LLM02 | ASI03 |
-| 10 | DNS rebinding (local servers) | Origin allowlist on loopback (403) | 🟢 **enforce** | transport | Spoofing, EoP | MANAGE | LLM06 | ASI03 |
-| 11 | Excessive permission / privilege escalation | Least-privilege scope check | 🟡 detect | host-orchestration | EoP | GOVERN, MAP, MANAGE | LLM06 | ASI03 |
-| 12 | Credential / token theft via passthrough | Response + secret scanning | 🟡 detect | host-orchestration | InfoDisclosure, EoP | GOVERN, MANAGE | LLM02, LLM06 | ASI03 |
-| 13 | System-prompt / context leakage | Response content scanning | 🟡 detect | client | InfoDisclosure | MEASURE, MANAGE | LLM07, LLM02 | ASI01 |
+|   # | Threat / check                              | Bastion mechanism                  | Action         | Layer              | STRIDE                              | NIST AI RMF          | OWASP LLM 2025 | OWASP Agentic 2026 |
+| --: | ------------------------------------------- | ---------------------------------- | -------------- | ------------------ | ----------------------------------- | -------------------- | -------------- | ------------------ |
+|   1 | Tool poisoning                              | Description scanning (`scanTool`)  | 🟡 detect      | tool               | Tampering, EoP                      | MAP, MEASURE, MANAGE | LLM01, LLM06   | ASI01, ASI02       |
+|   2 | Tool shadowing / name collision             | Cross-server name-collision check  | 🟡 detect      | client             | Spoofing, Tampering                 | MAP, MANAGE          | LLM01, LLM03   | ASI01, ASI04       |
+|   3 | Rug pull (definition mutation)              | Definition pinning + hash compare  | 🟢 **enforce** | tool               | Tampering                           | MEASURE, MANAGE      | LLM03, LLM06   | ASI04              |
+|   4 | Out-of-scope parameter injection            | Argument schema validation         | 🟡 detect      | tool               | Tampering, EoP                      | MEASURE, MANAGE      | LLM05, LLM06   | ASI02              |
+|   5 | Prompt injection via tool results           | Response content scanning          | 🟡 detect      | tool               | Tampering                           | MEASURE, MANAGE      | LLM01, LLM05   | ASI01              |
+|   6 | Indirect / retrieval injection              | Response content scanning          | 🟡 detect      | tool               | Tampering                           | MEASURE, MANAGE      | LLM01          | ASI01              |
+|   7 | Cross-tool exfiltration (confused deputy)   | Sensitive-argument scanning        | 🟡 detect      | client             | InfoDisclosure, EoP                 | MAP, MEASURE, MANAGE | LLM02, LLM06   | ASI02, ASI03       |
+|   8 | Schema / validation bypass                  | Argument schema validation         | 🟡 detect      | server             | Tampering, EoP                      | MEASURE, MANAGE      | LLM05          | ASI02              |
+|   9 | Man-in-the-middle (transport)               | Plaintext-HTTP transport check     | 🟡 detect      | transport          | Tampering, InfoDisclosure, Spoofing | MANAGE               | LLM02          | ASI03              |
+|  10 | DNS rebinding (local servers)               | Origin allowlist on loopback (403) | 🟢 **enforce** | transport          | Spoofing, EoP                       | MANAGE               | LLM06          | ASI03              |
+|  11 | Excessive permission / privilege escalation | Least-privilege scope check        | 🟡 detect      | host-orchestration | EoP                                 | GOVERN, MAP, MANAGE  | LLM06          | ASI03              |
+|  12 | Credential / token theft via passthrough    | Response + secret scanning         | 🟡 detect      | host-orchestration | InfoDisclosure, EoP                 | GOVERN, MANAGE       | LLM02, LLM06   | ASI03              |
+|  13 | System-prompt / context leakage             | Response content scanning          | 🟡 detect      | client             | InfoDisclosure                      | MEASURE, MANAGE      | LLM07, LLM02   | ASI01              |
 
 🟢 **enforce** = blocks the call · 🟡 detect = flags/warns (blocking is opt-in via config) · EoP = Elevation of Privilege
 
