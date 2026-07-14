@@ -255,6 +255,17 @@ including calls blocked by the security layer:
 - **Redaction.** Arguments are omitted by default; set `includeArgs` to `redacted` to keep structure
   while masking sensitive keys.
 
+## Standards alignment
+
+Every security check maps to recognized frameworks — the **NIST AI Risk Management Framework** (a U.S.
+federal standard), the **OWASP Top 10 for LLM (2025)** and **Agentic (2026)** Applications, and
+**STRIDE**. The full per-check mapping (with reference links to the MCP-security literature the checks
+are drawn from) is in **[docs/CHECKS-MAPPING.md](docs/CHECKS-MAPPING.md)**.
+
+Coverage is measured independently — bastion is scored against a 22-vector attack surface by the
+vendor-neutral [mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench) benchmark, with a
+public [leaderboard and framework mapping](https://gowthaman90.github.io/mcp-defense-bench/).
+
 ## Client setup
 
 The steps are identical for every client — only the **config file location** differs:
