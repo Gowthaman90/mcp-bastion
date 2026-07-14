@@ -17,7 +17,8 @@ function isLoopbackHost(hostHeader: string | undefined): boolean {
   if (!hostHeader) return false;
   let host = hostHeader.trim().toLowerCase();
   // IPv6 literal: [::1]:port or [::1]
-  if (host.startsWith("[")) host = host.slice(1, host.indexOf("]") === -1 ? undefined : host.indexOf("]"));
+  if (host.startsWith("["))
+    host = host.slice(1, host.indexOf("]") === -1 ? undefined : host.indexOf("]"));
   else host = host.split(":")[0]; // drop :port for IPv4/hostname
   return host === "localhost" || host === "::1" || host === "0.0.0.0" || /^127\./.test(host);
 }
@@ -54,7 +55,9 @@ export function checkRequestOrigin(
     originHost = new URL(origin).host;
   } catch {
     // A non-URL Origin against a loopback server is itself suspicious.
-    return [{ rule: "cross-origin-request", severity: "high", excerpt: `malformed origin ${origin}` }];
+    return [
+      { rule: "cross-origin-request", severity: "high", excerpt: `malformed origin ${origin}` },
+    ];
   }
   if (!isLoopbackHost(originHost)) {
     return [

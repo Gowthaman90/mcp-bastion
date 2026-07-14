@@ -86,9 +86,9 @@ describe("runtime security (v0.2, end-to-end via the manager)", () => {
     await mgr.connectAll();
 
     // A benign result passes straight through.
-    expect(textOf(await mgr.callUpstreamTool("mut__op", { echo: "here is the weather: 21C" }))).toBe(
-      "here is the weather: 21C",
-    );
+    expect(
+      textOf(await mgr.callUpstreamTool("mut__op", { echo: "here is the weather: 21C" })),
+    ).toBe("here is the weather: 21C");
 
     // A result that smuggles back an exfiltration instruction is blocked.
     const blocked = await mgr.callUpstreamTool("mut__op", {

@@ -54,10 +54,7 @@ export interface ToolCallContext {
   responseFindings?: SecurityFinding[];
   /** Set by a security interceptor when it blocks the call. */
   securityDecision?:
-    | "blocked_rug_pull"
-    | "blocked_poisoning"
-    | "blocked_response"
-    | "blocked_schema";
+    "blocked_rug_pull" | "blocked_poisoning" | "blocked_response" | "blocked_schema";
 }
 
 /** Continuation that invokes the next interceptor (or the upstream call). */
