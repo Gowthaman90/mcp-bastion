@@ -10,6 +10,11 @@ zero false positives. Last updated 2026-07-14._
 > security frameworks**: the U.S. NIST AI Risk Management Framework, the OWASP Top 10 for LLM (2025)
 > and Agentic (2026) Applications, and STRIDE. NIST AI RMF is a U.S. federal (Department of Commerce)
 > framework; OWASP is an international open standard; STRIDE is the classic threat-modeling taxonomy.
+> The vectors also align with the **NSA MCP Security guidance** (NSA AI Security Center, May 2026) —
+> another U.S. federal source — whose recommendation areas (Authentication & Access Control,
+> Monitoring & Logging, Data Classification & Segmentation, Runtime Controls) are crosswalked in the
+> full rubric. mcp-bastion's checks map primarily to the NSA **Runtime Controls**, **Authentication &
+> Access Control**, and **Monitoring & Logging** areas.
 
 ## The mapping
 
@@ -62,6 +67,9 @@ Exploitation · ASI03 Identity and Privilege Abuse · ASI04 Agentic Supply Chain
   https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/
 - **STRIDE threat model** (Microsoft) —
   https://learn.microsoft.com/en-us/azure/security/develop/threat-modeling-tool-threats
+- **NSA MCP Security — Security Design Considerations for AI-Driven Automation** (NSA AI Security
+  Center, CSI, May 2026, U/OO/6030316-26) —
+  https://www.nsa.gov/Portals/75/documents/Cybersecurity/CSI_MCP_SECURITY.pdf
 
 ### MCP security issues (primary literature the vectors are drawn from)
 
