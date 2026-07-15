@@ -15,10 +15,11 @@ import type { SecurityConfig } from "../config/index.js";
 import { ControlAction, controlToolName } from "../core/constants.js";
 import { textResult } from "../internal/index.js";
 import { logger, type Logger } from "../observability/index.js";
+import { scanToolSet } from "./correlation.js";
 import { hasSeverityAtLeast, scanText } from "./poisoning.js";
 import { validateArguments } from "./schema.js";
 import { ToolRegistry } from "./tool-registry.js";
-import type { Interceptor, ToolSecurityReport } from "./types.js";
+import type { Interceptor, SecurityFinding, ToolSecurityReport } from "./types.js";
 
 /** Stringify tool-call arguments for heuristic scanning; never throws. */
 function safeStringify(args: unknown): string {
@@ -40,6 +41,8 @@ function resultText(result: CallToolResult): string {
 
 export class SecurityEngine {
   private readonly registry = new ToolRegistry();
+  /** Cross-tool (split-poisoning) findings, per server. */
+  private readonly crossTool = new Map<string, SecurityFinding[]>();
 
   /**
    * @param policy    Security policy from configuration.
@@ -55,6 +58,24 @@ export class SecurityEngine {
   /** Reconcile the registry with a server's current tools. */
   observe(server: string, tools: readonly Tool[]): void {
     this.registry.observe(server, tools, { inspectDescriptions: this.policy.inspectDescriptions });
+
+    if (this.policy.correlateTools) {
+      const findings = scanToolSet(tools);
+      if (findings.length > 0) {
+        this.crossTool.set(server, findings);
+        this.log.warn(
+          { server, rules: findings.map((f) => f.rule) },
+          "cross-tool correlation flagged possible split-payload poisoning",
+        );
+      } else {
+        this.crossTool.delete(server);
+      }
+    }
+  }
+
+  /** Cross-tool (split-payload) findings per server, if any. */
+  crossToolStatus(): { server: string; findings: SecurityFinding[] }[] {
+    return [...this.crossTool.entries()].map(([server, findings]) => ({ server, findings }));
   }
 
   /** Per-tool security report (backs `bastion__security`). */

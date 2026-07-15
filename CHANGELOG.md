@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-14
+
+### Added
+
+- **Cross-tool correlation** — detects poisoning payloads _split across multiple tools_ to evade
+  single-tool scanning (e.g. threshold "split-payload" poisoning such as ShareLock, arXiv:2606.27027).
+  Because bastion observes a server's whole tool set, it scans the combined descriptions and flags
+  coordinated `share`/`checksum`/`tool_id`-style staging metadata across tools. Config:
+  `security.correlateTools` (default true). New exported helper `scanToolSet`; findings surface via
+  `SecurityEngine.crossToolStatus()`. This is a heuristic for the staging pattern, not a cryptographic
+  defeat of secret-sharing.
+
 ## [0.3.1] - 2026-07-13
 
 ### Fixed
