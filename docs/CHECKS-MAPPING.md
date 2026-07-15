@@ -2,8 +2,8 @@
 
 _Each security check mcp-bastion performs, mapped to the frameworks it exercises. The mappings are
 drawn from the [mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench) threat–control
-crosswalk and reflect what the benchmark **measured** mcp-bastion doing (13 of 22 attack vectors), at
-zero false positives. Last updated 2026-07-13._
+crosswalk and reflect what the benchmark **measured** mcp-bastion doing (14 of 24 attack vectors), at
+zero false positives. Last updated 2026-07-14._
 
 > **How the mapping is defined.** The checks are **threat-driven** — the vectors come from the
 > 2025–2026 MCP-security research literature (see References) — and each is **crosswalked to recognized
@@ -28,8 +28,14 @@ zero false positives. Last updated 2026-07-13._
 |  11 | Excessive permission / privilege escalation | Least-privilege scope check        | 🟡 detect      | host-orchestration | EoP                                 | GOVERN, MAP, MANAGE  | LLM06          | ASI03              |
 |  12 | Credential / token theft via passthrough    | Response + secret scanning         | 🟡 detect      | host-orchestration | InfoDisclosure, EoP                 | GOVERN, MANAGE       | LLM02, LLM06   | ASI03              |
 |  13 | System-prompt / context leakage             | Response content scanning          | 🟡 detect      | client             | InfoDisclosure                      | MEASURE, MANAGE      | LLM07, LLM02   | ASI01              |
+|  14 | Mid-session tool injection (MSTI)           | Definition pinning + hash compare  | 🟢 **enforce** | client             | Tampering, Spoofing                 | MEASURE, MANAGE      | LLM01, LLM06   | ASI01, ASI04       |
 
 🟢 **enforce** = blocks the call · 🟡 detect = flags/warns (blocking is opt-in via config) · EoP = Elevation of Privilege
+
+**Known gap (not covered):** _Multi-tool split poisoning (ShareLock, arXiv:2606.27027)_ splits a
+malicious payload across several benign-looking tool descriptions, defeating per-tool scanning by
+design. mcp-bastion scans each tool individually, so it does not catch this today — and neither does
+any other measured tool. Cross-tool correlation is on the roadmap.
 
 ## Legend
 
@@ -71,6 +77,10 @@ Exploitation · ASI03 Identity and Privilege Abuse · ASI04 Agentic Supply Chain
 - **ETDI: Mitigating Tool Squatting and Rug-Pull Attacks in MCP** — arXiv:2506.01333 —
   https://arxiv.org/abs/2506.01333
 - **The Trustworthy MCP Registry** (Future Internet 2026) — https://doi.org/10.3390/fi18050243
+- **WebMCP Tool Surface Poisoning / Mid-Session Tool Injection (MSTI)** — arXiv:2606.06387 —
+  https://arxiv.org/abs/2606.06387
+- **ShareLock: A Stealthy Multi-Tool Threshold Poisoning Attack Against MCP** — arXiv:2606.27027 —
+  https://arxiv.org/abs/2606.27027
 
 ### MCP protocol
 
