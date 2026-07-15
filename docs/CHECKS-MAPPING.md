@@ -2,7 +2,7 @@
 
 _Each security check mcp-bastion performs, mapped to the frameworks it exercises. The mappings are
 drawn from the [mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench) threat–control
-crosswalk and reflect what the benchmark **measured** mcp-bastion doing (14 of 24 attack vectors), at
+crosswalk and reflect what the benchmark **measured** mcp-bastion doing (15 of 24 attack vectors), at
 zero false positives. Last updated 2026-07-14._
 
 > **How the mapping is defined.** The checks are **threat-driven** — the vectors come from the
@@ -34,13 +34,16 @@ zero false positives. Last updated 2026-07-14._
 |  12 | Credential / token theft via passthrough    | Response + secret scanning         | 🟡 detect      | host-orchestration | InfoDisclosure, EoP                 | GOVERN, MANAGE       | LLM02, LLM06   | ASI03              |
 |  13 | System-prompt / context leakage             | Response content scanning          | 🟡 detect      | client             | InfoDisclosure                      | MEASURE, MANAGE      | LLM07, LLM02   | ASI01              |
 |  14 | Mid-session tool injection (MSTI)           | Definition pinning + hash compare  | 🟢 **enforce** | client             | Tampering, Spoofing                 | MEASURE, MANAGE      | LLM01, LLM06   | ASI01, ASI04       |
+|  15 | Multi-tool split poisoning (ShareLock)      | Cross-tool correlation (v0.4)      | 🟡 detect      | tool               | Tampering                           | MEASURE, MANAGE      | LLM01, LLM03   | ASI01, ASI04       |
 
 🟢 **enforce** = blocks the call · 🟡 detect = flags/warns (blocking is opt-in via config) · EoP = Elevation of Privilege
 
-**Known gap (not covered):** _Multi-tool split poisoning (ShareLock, arXiv:2606.27027)_ splits a
-malicious payload across several benign-looking tool descriptions, defeating per-tool scanning by
-design. mcp-bastion scans each tool individually, so it does not catch this today — and neither does
-any other measured tool. Cross-tool correlation is on the roadmap.
+**Note on ShareLock (multi-tool split poisoning, arXiv:2606.27027).** v0.4 adds **cross-tool
+correlation**: because bastion sees a server's whole tool set, it scans the combined descriptions and
+flags coordinated `share`/`checksum`/`tool_id` staging metadata across tools — the pattern this attack
+uses. This is a **heuristic for the staging signal**, not a cryptographic defeat of threshold
+secret-sharing, so a sufficiently disguised variant can still evade it. When we added this vector,
+**no** measured tool covered it; bastion is the first to detect it.
 
 ## Legend
 
