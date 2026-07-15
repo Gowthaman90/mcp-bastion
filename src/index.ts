@@ -40,6 +40,7 @@ export {
   SecurityEngine,
   scanTool,
   scanText,
+  scanToolSet,
   validateArguments,
   checkRequestedScopes,
   checkTransportSecurity,

@@ -108,6 +108,11 @@ export const SecurityConfigSchema = z
      */
     onResponse: z.enum(["block", "warn"]).default("warn"),
     /**
+     * Correlate a server's tools with each other to catch poisoning payloads split across
+     * multiple tools to evade single-tool scanning (e.g. threshold "split-payload" poisoning).
+     */
+    correlateTools: z.boolean().default(true),
+    /**
      * Validate each tool call's arguments against the tool's declared `inputSchema`
      * — flags undeclared parameters (smuggling) and type/enum violations (validation bypass).
      */
