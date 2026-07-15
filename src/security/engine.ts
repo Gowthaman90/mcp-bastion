@@ -15,7 +15,11 @@ import type { SecurityConfig } from "../config/index.js";
 import { ControlAction, controlToolName } from "../core/constants.js";
 import { textResult } from "../internal/index.js";
 import { logger, type Logger } from "../observability/index.js";
+import { checkCommandInjection } from "./command-injection.js";
+import { checkConfigDrift } from "./config-drift.js";
 import { scanToolSet } from "./correlation.js";
+import { checkServerIdentity, hashServerIdentity, type ServerIdentity } from "./identity.js";
+import { TaintTracker } from "./taint.js";
 import { hasSeverityAtLeast, scanText } from "./poisoning.js";
 import { validateArguments } from "./schema.js";
 import { ToolRegistry } from "./tool-registry.js";
@@ -43,6 +47,16 @@ export class SecurityEngine {
   private readonly registry = new ToolRegistry();
   /** Cross-tool (split-poisoning) findings, per server. */
   private readonly crossTool = new Map<string, SecurityFinding[]>();
+  /** Trust-on-first-use config snapshot per server, for drift detection. */
+  private readonly pinnedConfig = new Map<string, Record<string, unknown>>();
+  /** Config-drift findings, per server. */
+  private readonly configDrift = new Map<string, SecurityFinding[]>();
+  /** Trust-on-first-use identity fingerprint per server. */
+  private readonly pinnedIdentity = new Map<string, string>();
+  /** Server-identity findings (unverified or changed), per server. */
+  private readonly identityFindings = new Map<string, SecurityFinding[]>();
+  /** Session-scoped cross-server data-flow (taint) tracker. */
+  private readonly taint = new TaintTracker();
 
   /**
    * @param policy    Security policy from configuration.
@@ -78,6 +92,80 @@ export class SecurityEngine {
     return [...this.crossTool.entries()].map(([server, findings]) => ({ server, findings }));
   }
 
+  /**
+   * Observe a server's effective configuration snapshot. Pins the first snapshot (trust-on-first-use)
+   * and, on a later snapshot, flags any security-relevant *weakening* versus the pinned baseline
+   * (e.g. a TLS downgrade or a host allowlist widened with a wildcard).
+   */
+  observeConfig(server: string, snapshot: Record<string, unknown>): void {
+    if (!this.policy.detectConfigDrift) return;
+    const baseline = this.pinnedConfig.get(server);
+    if (!baseline) {
+      this.pinnedConfig.set(server, { ...snapshot });
+      return;
+    }
+    const findings = checkConfigDrift(baseline, snapshot);
+    if (findings.length > 0) {
+      this.configDrift.set(server, findings);
+      this.log.warn(
+        { server, rules: findings.map((f) => f.rule) },
+        "configuration drift detected: server config weakened versus its reviewed baseline",
+      );
+    } else {
+      this.configDrift.delete(server);
+    }
+  }
+
+  /** Config-drift findings per server, if any. */
+  configDriftStatus(): { server: string; findings: SecurityFinding[] }[] {
+    return [...this.configDrift.entries()].map(([server, findings]) => ({ server, findings }));
+  }
+
+  /**
+   * Observe a server's advertised identity at (re)connect. Flags a claimed identity that lacks a
+   * verified binding, and — trust-on-first-use — flags a later identity that differs from the pinned
+   * one (endpoint/name/TLS change), a strong impersonation signal. Version/protocol changes do not
+   * trip the pin, so a benign redeploy is not flagged.
+   */
+  observeIdentity(server: string, identity: ServerIdentity): void {
+    if (!this.policy.pinServerIdentity) return;
+    const findings = [...checkServerIdentity(identity)];
+
+    const fingerprint = hashServerIdentity(identity);
+    const pinned = this.pinnedIdentity.get(server);
+    if (pinned === undefined) {
+      this.pinnedIdentity.set(server, fingerprint);
+    } else if (pinned !== fingerprint) {
+      findings.push({
+        rule: "server-identity-changed",
+        severity: "high",
+        excerpt: `server "${server}" identity changed after it was first pinned (possible impersonation)`,
+      });
+    }
+
+    if (findings.length > 0) {
+      this.identityFindings.set(server, findings);
+      this.log.warn(
+        { server, rules: findings.map((f) => f.rule) },
+        "server-identity check flagged a possible impersonation",
+      );
+    } else {
+      this.identityFindings.delete(server);
+    }
+  }
+
+  /** Server-identity findings per server, if any. */
+  identityStatus(): { server: string; findings: SecurityFinding[] }[] {
+    return [...this.identityFindings.entries()].map(([server, findings]) => ({ server, findings }));
+  }
+
+  /** Whether a server's pinned identity has changed (backs the identity interceptor / enforcement). */
+  private identityChanged(server: string): boolean {
+    return (this.identityFindings.get(server) ?? []).some(
+      (f) => f.rule === "server-identity-changed",
+    );
+  }
+
   /** Per-tool security report (backs `bastion__security`). */
   status(): ToolSecurityReport[] {
     return this.registry.report();
@@ -91,11 +179,43 @@ export class SecurityEngine {
   /** The ordered interceptors enforcing the configured policy. */
   buildInterceptors(): Interceptor[] {
     const interceptors: Interceptor[] = [];
+    if (this.policy.pinServerIdentity) interceptors.push(this.identityInterceptor());
     if (this.policy.pinTools) interceptors.push(this.rugPullInterceptor());
     if (this.policy.inspectDescriptions) interceptors.push(this.poisoningInterceptor());
     if (this.policy.validateArguments) interceptors.push(this.argumentInterceptor());
+    if (this.policy.trackDataFlow) interceptors.push(this.dataFlowInterceptor());
     if (this.policy.scanResponses) interceptors.push(this.responseScanInterceptor());
     return interceptors;
+  }
+
+  /**
+   * Blocks (or warns on) calls to a server whose pinned identity changed after first connect
+   * (endpoint/name/TLS) — the server-layer analogue of rug-pull detection. Defaults to block,
+   * since a mid-session identity change is a strong impersonation/hijack signal.
+   */
+  private identityInterceptor(): Interceptor {
+    return (ctx, next) => {
+      if (!this.identityChanged(ctx.server)) return next();
+      const findings = this.identityFindings.get(ctx.server) ?? [];
+      ctx.findings = [...(ctx.findings ?? []), ...findings];
+      this.log.warn(
+        { server: ctx.server, tool: ctx.toolName },
+        "server identity changed after pinning: possible impersonation",
+      );
+      if (this.policy.onIdentityChange === "block") {
+        ctx.securityDecision = "blocked_identity";
+        return Promise.resolve(
+          textResult(
+            `Blocked by mcp-bastion: the identity of server "${ctx.server}" (endpoint / name / TLS ` +
+              `fingerprint) changed after it was first pinned — a possible server-impersonation or ` +
+              `hijack. Verify the server, then re-approve, or set security.onIdentityChange to "warn" ` +
+              `if this change is expected.`,
+            true,
+          ),
+        );
+      }
+      return next();
+    };
   }
 
   /** Blocks (or warns on) calls to a tool whose definition changed after approval. */
@@ -174,6 +294,7 @@ export class SecurityEngine {
       const findings = [
         ...validateArguments(state?.inputSchema, ctx.args),
         ...scanText(safeStringify(ctx.args)),
+        ...(this.policy.detectCommandInjection ? checkCommandInjection(ctx.args) : []),
       ];
       if (findings.length === 0) return next();
 
@@ -189,14 +310,47 @@ export class SecurityEngine {
         return Promise.resolve(
           textResult(
             `Blocked by mcp-bastion: the call to tool "${ctx.toolName}" on server "${ctx.server}" ` +
-              `failed argument validation (${rules}). The arguments do not match the tool's declared ` +
-              `input schema — a possible parameter-smuggling or validation-bypass attempt. Set ` +
-              `security.onSchemaViolation to "warn" if this is a false positive.`,
+              `failed argument inspection (${rules}) — a possible parameter-smuggling, ` +
+              `validation-bypass, or command-injection attempt. Set security.onSchemaViolation to ` +
+              `"warn" if this is a false positive.`,
             true,
           ),
         );
       }
       return next();
+    };
+  }
+
+  /**
+   * Tracks sensitive data across the trust boundary between servers. Before a call, checks its
+   * outgoing arguments for a credential-shaped token that a *different* server returned earlier
+   * (the exfiltration leg of a cross-server / tool-transfer attack); after the call, records any
+   * sensitive tokens the result (or arguments) carry, sourced to this call's server.
+   */
+  private dataFlowInterceptor(): Interceptor {
+    return async (ctx, next) => {
+      const argText = safeStringify(ctx.args);
+      const pre = this.taint.check(ctx.server, [argText]);
+      if (pre.length > 0) {
+        ctx.findings = [...(ctx.findings ?? []), ...pre];
+        this.log.warn(
+          { server: ctx.server, tool: ctx.toolName, rules: pre.map((f) => f.rule) },
+          "cross-server data flow: another server's sensitive data is in this call's arguments",
+        );
+        if (this.policy.onDataFlow === "block") {
+          ctx.securityDecision = "blocked_dataflow";
+          return textResult(
+            `Blocked by mcp-bastion: the call to tool "${ctx.toolName}" on server "${ctx.server}" ` +
+              `would send data that was read from a different server across the trust boundary — a ` +
+              `possible cross-server exfiltration. Set security.onDataFlow to "warn" if this is a ` +
+              `false positive.`,
+            true,
+          );
+        }
+      }
+      const result = await next();
+      if (!ctx.securityDecision) this.taint.record(ctx.server, [resultText(result), argText]);
+      return result;
     };
   }
 

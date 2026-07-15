@@ -122,6 +122,40 @@ export const SecurityConfigSchema = z
      * but defaults to `warn` to stay non-breaking; set to `block` to enforce.
      */
     onSchemaViolation: z.enum(["block", "warn"]).default("warn"),
+    /**
+     * Scan tool-call argument *values* for OS command-injection payloads (command substitution,
+     * `; rm …`-style chaining, `/etc/passwd` reads) bound for exec-style tools. Surfaced through
+     * the same argument-inspection path as schema validation and governed by `onSchemaViolation`.
+     */
+    detectCommandInjection: z.boolean().default(true),
+    /**
+     * Pin each server's effective configuration snapshot on first observation and flag
+     * security-relevant *weakening* on later observations (TLS downgrade, host allowlist widened
+     * with a wildcard, a protective flag disabled) — configuration drift.
+     */
+    detectConfigDrift: z.boolean().default(true),
+    /**
+     * Verify server identity and pin it (trust-on-first-use): flag a claimed identity with no
+     * verified binding, and detect an endpoint/name/TLS-fingerprint change on a later connect
+     * (server impersonation). Version/protocol changes do not trip the pin.
+     */
+    pinServerIdentity: z.boolean().default(true),
+    /**
+     * What to do when a server's *pinned* identity changes mid-session. Defaults to `block`,
+     * mirroring `onRugPull`, since a mid-session identity change is a strong impersonation signal.
+     */
+    onIdentityChange: z.enum(["block", "warn"]).default("block"),
+    /**
+     * Track sensitive data across servers: a credential-shaped token returned by one server and then
+     * sent in an argument to a *different* server is flagged as a cross-server exfiltration — the leg
+     * of a tool-transfer attack that only an aggregating proxy can see.
+     */
+    trackDataFlow: z.boolean().default(true),
+    /**
+     * What to do when cross-server data flow is detected. Defaults to `warn`; set to `block` to deny
+     * the outgoing call that would carry another server's data across the boundary.
+     */
+    onDataFlow: z.enum(["block", "warn"]).default("warn"),
   })
   .default({});
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;

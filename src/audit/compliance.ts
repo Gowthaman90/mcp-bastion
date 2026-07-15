@@ -40,6 +40,16 @@ export function frameworksFor(
     owasp.add("LLM05: Improper Output Handling");
     owasp.add("LLM06: Excessive Agency");
   }
+  if (decision === "blocked_identity") {
+    nist.add("MANAGE");
+    owasp.add("LLM03: Training Data / Supply Chain");
+    owasp.add("LLM06: Excessive Agency");
+  }
+  if (decision === "blocked_dataflow") {
+    nist.add("MANAGE");
+    owasp.add("LLM02: Sensitive Information Disclosure");
+    owasp.add("LLM06: Excessive Agency");
+  }
 
   return { nistAiRmf: [...nist], owaspLlm: [...owasp] };
 }
