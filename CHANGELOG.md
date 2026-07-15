@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-15
+
+### Added
+
+Four new checks that each close an attack vector the mcp-defense-bench leaderboard showed **no
+measured tool covering**, taking bastion's measured coverage from 38% to **48% (11.5/24 vectors)** at
+zero false positives:
+
+- **Cross-server data-flow (taint) tracking** — a credential-shaped token returned by one server and
+  then sent in an argument to a _different_ server is flagged as cross-server exfiltration (the
+  tool-transfer leg only an aggregating proxy can see). Exact-token propagation keeps false positives
+  near zero. New exports `scanCallSequence` / `extractSensitiveTokens` / `TaintTracker`; config
+  `security.trackDataFlow` (default true), `security.onDataFlow` (`warn`|`block`, default `warn`).
+- **Server-identity pinning (TOFU)** — flags a claimed identity with no verified binding, and detects
+  an endpoint/name/TLS-fingerprint change after first connect (server impersonation); a benign
+  version bump does not trip it. Blocks by default on a changed pinned identity, mirroring rug-pull.
+  New exports `checkServerIdentity` / `hashServerIdentity`; config `security.pinServerIdentity`
+  (default true), `security.onIdentityChange` (`block`|`warn`, default `block`).
+- **Command-injection argument scanning** — scans argument values for OS-command payloads (command
+  substitution, `; rm …`-style chaining, `/etc/passwd` reads). Payload-shaped, not
+  metacharacter-shaped, to avoid flagging benign text. New export `checkCommandInjection`; config
+  `security.detectCommandInjection` (default true).
+- **Configuration-drift detection** — pins a server's effective config snapshot (TOFU) and flags
+  security-relevant _weakening_ (TLS downgrade, host allowlist widened with a wildcard, a protective
+  flag disabled). New export `checkConfigDrift`; config `security.detectConfigDrift` (default true).
+
+New audit decisions `blocked_identity` / `blocked_dataflow`, mapped to NIST MANAGE and OWASP
+LLM02/LLM03/LLM06.
+
 ## [0.4.0] - 2026-07-14
 
 ### Added
@@ -101,6 +130,8 @@ spanning three layers plus dual transports.
 - Strict TypeScript, layered architecture (`config` / `core` / `security` / `audit` / `proxy` /
   `observability` / `internal`), ESLint + Prettier, unit + end-to-end tests, and CI.
 
-[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.3.1...v0.4.0
 [0.2.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Gowthaman90/mcp-bastion/releases/tag/v0.1.0
