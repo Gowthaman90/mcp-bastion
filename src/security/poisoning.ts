@@ -11,6 +11,7 @@
  */
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
+import { normalizedViews } from "./normalize.js";
 import type { SecurityFinding, Severity } from "./types.js";
 
 interface Rule {
@@ -76,14 +77,30 @@ function excerpt(text: string, match: RegExpMatchArray | null): string {
     .trim();
 }
 
-/** Scan a single block of text for poisoning signals. */
-export function scanText(text: string): SecurityFinding[] {
+/**
+ * Scan a single block of text for poisoning signals.
+ *
+ * @param text      The text to scan.
+ * @param normalize When true (default), the rules are also run over evasion-normalized views of the
+ *                  text (NFKC, homoglyph-folded, base64-decoded), so a payload hidden behind Unicode
+ *                  look-alikes or base64 is still caught. The hidden-character rule always runs on the
+ *                  original text.
+ */
+export function scanText(text: string, normalize = true): SecurityFinding[] {
   if (!text) return [];
   const findings: SecurityFinding[] = [];
+  const seen = new Set<string>();
 
-  for (const { rule, severity, pattern } of RULES) {
-    const match = text.match(pattern);
-    if (match) findings.push({ rule, severity, excerpt: excerpt(text, match) });
+  const views = normalize ? normalizedViews(text) : [text];
+  for (const view of views) {
+    for (const { rule, severity, pattern } of RULES) {
+      if (seen.has(rule)) continue; // one finding per rule across all views
+      const match = view.match(pattern);
+      if (match) {
+        seen.add(rule);
+        findings.push({ rule, severity, excerpt: excerpt(view, match) });
+      }
+    }
   }
 
   if (HIDDEN_CHARS.test(text)) {
@@ -100,11 +117,12 @@ export function scanText(text: string): SecurityFinding[] {
 /**
  * Scan a tool's name and description for poisoning signals.
  *
- * @param tool The tool definition to inspect.
+ * @param tool      The tool definition to inspect.
+ * @param normalize Whether to also scan evasion-normalized views (default true).
  * @returns All findings across the tool's name and description.
  */
-export function scanTool(tool: Tool): SecurityFinding[] {
-  return [...scanText(tool.name ?? ""), ...scanText(tool.description ?? "")];
+export function scanTool(tool: Tool, normalize = true): SecurityFinding[] {
+  return [...scanText(tool.name ?? "", normalize), ...scanText(tool.description ?? "", normalize)];
 }
 
 /** Whether any finding is at least the given severity. */

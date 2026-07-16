@@ -52,6 +52,8 @@ export interface ToolCallContext {
   findings?: SecurityFinding[];
   /** Heuristic findings on the tool's *result* (response-handling stage). */
   responseFindings?: SecurityFinding[];
+  /** Number of secret values redacted from the tool's result by inline DLP (0/undefined = none). */
+  redactedSecrets?: number;
   /** Set by a security interceptor when it blocks the call. */
   securityDecision?:
     | "blocked_rug_pull"
