@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-16
+
+### Added
+
+- **Official MCP Registry metadata** — `mcpName` (`io.github.Gowthaman90/mcp-bastion`) in `package.json`
+  and a `server.json` manifest, so mcp-bastion can be published to and discovered through the official
+  Model Context Protocol registry. No functional change to the proxy.
+
 ## [0.6.0] - 2026-07-15
 
 A "depth" release: not more vectors, but stronger defense of the ones already covered — surviving
@@ -165,7 +173,8 @@ spanning three layers plus dual transports.
 - Strict TypeScript, layered architecture (`config` / `core` / `security` / `audit` / `proxy` /
   `observability` / `internal`), ESLint + Prettier, unit + end-to-end tests, and CI.
 
-[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.3.1...v0.4.0

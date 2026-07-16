@@ -1,6 +1,7 @@
 {
   "name": "mcp-bastion",
-  "version": "0.6.0",
+  "version": "0.6.1",
+  "mcpName": "io.github.Gowthaman90/mcp-bastion",
   "description": "Reliability + security proxy for the Model Context Protocol (MCP): self-healing connections, runtime tool-security (rug-pull/poisoning detection), and a compliance-mapped audit trail.",
   "type": "module",
   "bin": {
