@@ -8,6 +8,8 @@ _Self-healing connections, runtime tool-security, and a compliance-mapped audit 
 
 [![npm version](https://img.shields.io/npm/v/mcp-bastion.svg?color=cb3837&logo=npm)](https://www.npmjs.com/package/mcp-bastion)
 [![npm downloads](https://img.shields.io/npm/dm/mcp-bastion.svg?color=cb3837)](https://www.npmjs.com/package/mcp-bastion)
+[![MCP Registry](https://img.shields.io/badge/MCP_Registry-listed-6f42c1)](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.Gowthaman90/mcp-bastion)
+[![Measured coverage](https://img.shields.io/badge/mcp--defense--bench-63%25_coverage-2ea44f)](https://github.com/Gowthaman90/mcp-defense-bench)
 [![CI](https://github.com/Gowthaman90/mcp-bastion/actions/workflows/ci.yml/badge.svg)](https://github.com/Gowthaman90/mcp-bastion/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
@@ -27,7 +29,9 @@ Desktop, or any MCP-compliant agent) and your MCP servers. It is **client-agnost
 any compliant client through configuration alone, with zero client-specific code — and **non-invasive**:
 your servers run unchanged, and removing Bastion is a one-line config revert.
 
-📦 **Package:** [`mcp-bastion` on npm](https://www.npmjs.com/package/mcp-bastion)
+📦 **Package:** [`mcp-bastion` on npm](https://www.npmjs.com/package/mcp-bastion) · 🗂️ **Official MCP Registry:** `io.github.Gowthaman90/mcp-bastion`
+
+🔒 **Security, measured:** on the open, vendor-neutral [mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench), Bastion covers **63% of the MCP attack surface (15.0/24 vectors; 11 enforced)** at zero false positives — the broadest of the proxies measured.
 
 📖 **Launch story:** [Medium](https://medium.com/p/e74f638e9e15) · [dev.to](https://dev.to/gowthaman90/the-mcp-reliability-security-gap-and-an-open-source-proxy-that-fills-it-3ppo)
 
@@ -140,6 +144,13 @@ Bastion is published on npm as [`mcp-bastion`](https://www.npmjs.com/package/mcp
 **3. Restart your client.** Your tools now appear namespaced (e.g. `github__create_issue`) alongside
 Bastion's control tools. See [`bastion.config.example.json`](./bastion.config.example.json) for the
 full set of options.
+
+> 🔒 **Security is on by default.** Out of the box, Bastion runs the `balanced` enforcement profile:
+> it **blocks** high-confidence attacks (rug-pulls, argument/command injection, cross-server
+> exfiltration, server-identity changes) and **warns** on heuristic ones (description/response
+> poisoning), while redacting leaked secrets from tool results. Set `security.enforcementProfile` to
+> `observe` (warn-only) or `strict` (block-all), or tune any individual control — see
+> [Runtime security](#runtime-security).
 
 ## Demo
 
