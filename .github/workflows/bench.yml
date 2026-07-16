@@ -1,0 +1,51 @@
+name: Benchmark regression gate
+
+# Runs the vendor-neutral mcp-defense-bench against this build and fails if bastion's measured
+# coverage drops below the floor or any false positive appears. Operationalizes the "living
+# benchmark" loop: a change that regresses the defense cannot merge.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Weighted-coverage floor (out of 24 vectors). Bump this when a release raises coverage.
+  BENCH_FLOOR: "15.0"
+
+jobs:
+  bench:
+    name: mcp-defense-bench (coverage floor + zero false positives)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mcp-bastion
+        uses: actions/checkout@v4
+        with:
+          path: mcp_bastion
+
+      - name: Checkout mcp-defense-bench
+        uses: actions/checkout@v4
+        with:
+          repository: Gowthaman90/mcp-defense-bench
+          path: mcp-defense-bench
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build mcp-bastion
+        working-directory: mcp_bastion
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run benchmark and assert the floor
+        working-directory: mcp-defense-bench
+        # The mcp-bastion adapter resolves the sibling ../mcp_bastion/dist build automatically.
+        run: |
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npm run bench:bastion

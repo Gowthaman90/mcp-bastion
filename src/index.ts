@@ -46,6 +46,7 @@ export {
   checkServerIdentity,
   hashServerIdentity,
   scanCallSequence,
+  redactSecrets,
   validateArguments,
   checkRequestedScopes,
   checkTransportSecurity,

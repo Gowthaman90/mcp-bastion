@@ -17,6 +17,7 @@ import { textResult } from "../internal/index.js";
 import { logger, type Logger } from "../observability/index.js";
 import { checkCommandInjection } from "./command-injection.js";
 import { checkConfigDrift } from "./config-drift.js";
+import { redactSecrets } from "./dlp.js";
 import { scanToolSet } from "./correlation.js";
 import { checkServerIdentity, hashServerIdentity, type ServerIdentity } from "./identity.js";
 import { TaintTracker } from "./taint.js";
@@ -71,7 +72,10 @@ export class SecurityEngine {
 
   /** Reconcile the registry with a server's current tools. */
   observe(server: string, tools: readonly Tool[]): void {
-    this.registry.observe(server, tools, { inspectDescriptions: this.policy.inspectDescriptions });
+    this.registry.observe(server, tools, {
+      inspectDescriptions: this.policy.inspectDescriptions,
+      normalizeEvasion: this.policy.normalizeEvasion,
+    });
 
     if (this.policy.correlateTools) {
       const findings = scanToolSet(tools);
@@ -293,7 +297,7 @@ export class SecurityEngine {
       const state = this.registry.state(ctx.server, ctx.toolName);
       const findings = [
         ...validateArguments(state?.inputSchema, ctx.args),
-        ...scanText(safeStringify(ctx.args)),
+        ...scanText(safeStringify(ctx.args), this.policy.normalizeEvasion),
         ...(this.policy.detectCommandInjection ? checkCommandInjection(ctx.args) : []),
       ];
       if (findings.length === 0) return next();
@@ -355,17 +359,61 @@ export class SecurityEngine {
   }
 
   /**
+   * Apply inline DLP redaction to a result's text blocks, returning a new result (with secret values
+   * replaced) and the total number of redactions. The original result is left untouched.
+   */
+  private redactResultSecrets(result: CallToolResult): {
+    result: CallToolResult;
+    redactions: number;
+  } {
+    const content = (result.content ?? []) as Array<{ type?: string; text?: string }>;
+    let redactions = 0;
+    const newContent = content.map((block) => {
+      if (block?.type !== "text" || typeof block.text !== "string") return block;
+      const { text, redactions: n } = redactSecrets(block.text);
+      redactions += n;
+      return n > 0 ? { ...block, text } : block;
+    });
+    return redactions > 0
+      ? { result: { ...result, content: newContent } as CallToolResult, redactions }
+      : { result, redactions: 0 };
+  }
+
+  /**
    * Scans a tool's *result* for injected instructions / exfiltration signals. Runs after
    * the upstream call so it can inspect what the server actually returned — the
    * response-handling stage that definition-only checks miss.
    */
   private responseScanInterceptor(): Interceptor {
     return async (ctx, next) => {
-      const result = await next();
+      let result = await next();
       // Don't second-guess a call another interceptor already blocked.
       if (ctx.securityDecision) return result;
 
-      const findings = scanText(resultText(result));
+      const findings = scanText(resultText(result), this.policy.normalizeEvasion);
+
+      // Inline DLP: strip credential-shaped secret *values* from the result (an enforcing
+      // mitigation), independent of whether the response also tripped an injection heuristic.
+      if (this.policy.redactResponseSecrets) {
+        const { result: redacted, redactions } = this.redactResultSecrets(result);
+        if (redactions > 0) {
+          result = redacted;
+          ctx.redactedSecrets = redactions;
+          ctx.findings = [
+            ...(ctx.findings ?? []),
+            {
+              rule: "secret-redacted",
+              severity: "high",
+              excerpt: `${redactions} secret value(s) redacted from the tool result`,
+            },
+          ];
+          this.log.warn(
+            { server: ctx.server, tool: ctx.toolName, redactions },
+            "inline DLP: redacted secret value(s) from tool result",
+          );
+        }
+      }
+
       if (findings.length === 0) return result;
 
       ctx.responseFindings = findings;

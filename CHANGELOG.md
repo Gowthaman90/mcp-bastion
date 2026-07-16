@@ -6,6 +6,41 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-15
+
+A "depth" release: not more vectors, but stronger defense of the ones already covered — surviving
+evasion, blocking (not just warning) the high-confidence attacks, and stripping leaked secrets.
+Measured coverage rises from 38%/48% to **63% (15.0/24)** at zero false positives, and evasion
+robustness from 1/3 to **3/3**.
+
+### Changed
+
+- **BREAKING (default posture): new `security.enforcementProfile`, default `balanced`.** The profile
+  resolves the individual `on*` actions as a group. Under `balanced`, the deterministic,
+  near-zero-false-positive checks now **block by default** — argument/schema violations and
+  command-injection (`onSchemaViolation`) and cross-server data-flow (`onDataFlow`) — joining rug-pull
+  and identity-change, which already blocked. Heuristic checks (description poisoning `onPoisoning`,
+  response-content `onResponse`) still only **warn**. Set `enforcementProfile: "observe"` to restore
+  the previous warn-on-everything behavior, or set any individual `on*` value to override the profile.
+  `strict` blocks on any finding.
+
+### Added
+
+- **Evasion normalization** — heuristics now run over normalized _views_ of scanned text (NFKC,
+  homoglyph-folded, base64-decoded), so a payload hidden behind Unicode look-alikes or base64 is
+  caught the same as its plain form. Config `security.normalizeEvasion` (default true). New exports
+  `normalizedViews` / `foldHomoglyphs` / `decodeBase64Segments`. (Evasion robustness 1/3 → 3/3.)
+- **Inline DLP redaction** — credential-shaped secret _values_ (cloud keys, provider tokens,
+  private-key blocks, `NAME=secret` assignments) are stripped from tool results inline — an enforcing
+  mitigation that removes the secret before the agent or any log sees it. Config
+  `security.redactResponseSecrets` (default true). New export `redactSecrets`.
+
+### CI
+
+- **Benchmark regression gate** (`.github/workflows/bench.yml`) — runs the vendor-neutral
+  mcp-defense-bench against each build and fails if measured coverage drops below the floor or any
+  false positive appears.
+
 ## [0.5.0] - 2026-07-15
 
 ### Added
@@ -130,7 +165,8 @@ spanning three layers plus dual transports.
 - Strict TypeScript, layered architecture (`config` / `core` / `security` / `audit` / `proxy` /
   `observability` / `internal`), ESLint + Prettier, unit + end-to-end tests, and CI.
 
-[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.3.1...v0.4.0
 [0.2.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.1.0...v0.2.0

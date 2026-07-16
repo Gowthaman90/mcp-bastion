@@ -82,20 +82,68 @@ export const NamespaceConfigSchema = z
   .default({});
 export type NamespaceConfig = z.infer<typeof NamespaceConfigSchema>;
 
+/** An on-detection action: block the call or warn only. */
+const OnAction = z.enum(["block", "warn"]);
+
+/**
+ * Enforcement profiles resolve the individual `on*` actions as a group. `balanced` (the default)
+ * blocks the deterministic, near-zero-false-positive checks (rug-pull, identity change, argument/
+ * schema + command-injection, cross-server exfiltration) while only warning on the heuristic ones
+ * (description poisoning, response-content heuristics). An explicit `on*` value always overrides the
+ * profile.
+ */
+const ENFORCEMENT_PROFILES = {
+  observe: {
+    onRugPull: "warn",
+    onPoisoning: "warn",
+    onResponse: "warn",
+    onSchemaViolation: "warn",
+    onIdentityChange: "warn",
+    onDataFlow: "warn",
+  },
+  balanced: {
+    onRugPull: "block",
+    onPoisoning: "warn",
+    onResponse: "warn",
+    onSchemaViolation: "block",
+    onIdentityChange: "block",
+    onDataFlow: "block",
+  },
+  strict: {
+    onRugPull: "block",
+    onPoisoning: "block",
+    onResponse: "block",
+    onSchemaViolation: "block",
+    onIdentityChange: "block",
+    onDataFlow: "block",
+  },
+} as const;
+
 /** Runtime security policy (v0.2). */
 export const SecurityConfigSchema = z
   .object({
     /** Pin each tool's definition on first use and detect later changes ("rug pulls"). */
     pinTools: z.boolean().default(true),
-    /** What to do when a tool's definition changed after approval. */
-    onRugPull: z.enum(["block", "warn"]).default("block"),
+    /**
+     * Enforcement posture: `observe` (warn on everything), `balanced` (block deterministic checks,
+     * warn on heuristics — the default), or `strict` (block on any finding). Individual `on*` settings
+     * override the profile.
+     */
+    enforcementProfile: z.enum(["observe", "balanced", "strict"]).default("balanced"),
+    /** What to do when a tool's definition changed after approval. Defaults from the profile. */
+    onRugPull: OnAction.optional(),
     /** Run heuristic poisoning inspection on tool descriptions. */
     inspectDescriptions: z.boolean().default(true),
     /**
-     * What to do when a description trips a high-severity poisoning heuristic.
-     * Defaults to `warn` because heuristics can produce false positives.
+     * Also run the heuristics over evasion-normalized views of scanned text (NFKC, homoglyph-folded,
+     * base64-decoded), so a payload hidden behind Unicode look-alikes or base64 is still caught.
      */
-    onPoisoning: z.enum(["block", "warn"]).default("warn"),
+    normalizeEvasion: z.boolean().default(true),
+    /**
+     * What to do when a description trips a high-severity poisoning heuristic. Defaults from the
+     * profile (`warn` under `balanced`, since heuristics can produce false positives).
+     */
+    onPoisoning: OnAction.optional(),
     /**
      * Scan tool *results* (not just definitions) for injected instructions and
      * exfiltration signals — defends the response-handling stage, where a server can
@@ -103,10 +151,16 @@ export const SecurityConfigSchema = z
      */
     scanResponses: z.boolean().default(true),
     /**
-     * What to do when a tool result trips a high-severity heuristic. Defaults to
-     * `warn`, mirroring `onPoisoning`, since the same heuristics apply.
+     * What to do when a tool result trips a high-severity heuristic. Defaults from the profile
+     * (`warn` under `balanced`), mirroring `onPoisoning`, since the same heuristics apply.
      */
-    onResponse: z.enum(["block", "warn"]).default("warn"),
+    onResponse: OnAction.optional(),
+    /**
+     * Redact credential-shaped secret *values* (cloud keys, provider tokens, private-key blocks,
+     * `NAME=secret` assignments) out of tool results inline — an enforcing mitigation that strips the
+     * secret before the agent or any downstream log can see it. Independent of `onResponse`.
+     */
+    redactResponseSecrets: z.boolean().default(true),
     /**
      * Correlate a server's tools with each other to catch poisoning payloads split across
      * multiple tools to evade single-tool scanning (e.g. threshold "split-payload" poisoning).
@@ -118,10 +172,10 @@ export const SecurityConfigSchema = z
      */
     validateArguments: z.boolean().default(true),
     /**
-     * What to do on an argument/schema violation. Deterministic and low-false-positive,
-     * but defaults to `warn` to stay non-breaking; set to `block` to enforce.
+     * What to do on an argument/schema violation (also governs command-injection). Deterministic and
+     * low-false-positive; defaults from the profile (`block` under `balanced`).
      */
-    onSchemaViolation: z.enum(["block", "warn"]).default("warn"),
+    onSchemaViolation: OnAction.optional(),
     /**
      * Scan tool-call argument *values* for OS command-injection payloads (command substitution,
      * `; rm …`-style chaining, `/etc/passwd` reads) bound for exec-style tools. Surfaced through
@@ -141,10 +195,10 @@ export const SecurityConfigSchema = z
      */
     pinServerIdentity: z.boolean().default(true),
     /**
-     * What to do when a server's *pinned* identity changes mid-session. Defaults to `block`,
-     * mirroring `onRugPull`, since a mid-session identity change is a strong impersonation signal.
+     * What to do when a server's *pinned* identity changes mid-session. Defaults from the profile
+     * (`block` under `balanced`), since a mid-session identity change is a strong impersonation signal.
      */
-    onIdentityChange: z.enum(["block", "warn"]).default("block"),
+    onIdentityChange: OnAction.optional(),
     /**
      * Track sensitive data across servers: a credential-shaped token returned by one server and then
      * sent in an argument to a *different* server is flagged as a cross-server exfiltration — the leg
@@ -152,10 +206,22 @@ export const SecurityConfigSchema = z
      */
     trackDataFlow: z.boolean().default(true),
     /**
-     * What to do when cross-server data flow is detected. Defaults to `warn`; set to `block` to deny
-     * the outgoing call that would carry another server's data across the boundary.
+     * What to do when cross-server data flow is detected. Defaults from the profile (`block` under
+     * `balanced`), denying the outgoing call that would carry another server's data across the boundary.
      */
-    onDataFlow: z.enum(["block", "warn"]).default("warn"),
+    onDataFlow: OnAction.optional(),
+  })
+  .transform((cfg) => {
+    const p = ENFORCEMENT_PROFILES[cfg.enforcementProfile];
+    return {
+      ...cfg,
+      onRugPull: cfg.onRugPull ?? p.onRugPull,
+      onPoisoning: cfg.onPoisoning ?? p.onPoisoning,
+      onResponse: cfg.onResponse ?? p.onResponse,
+      onSchemaViolation: cfg.onSchemaViolation ?? p.onSchemaViolation,
+      onIdentityChange: cfg.onIdentityChange ?? p.onIdentityChange,
+      onDataFlow: cfg.onDataFlow ?? p.onDataFlow,
+    };
   })
   .default({});
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;

@@ -2,8 +2,9 @@
 
 _Each security check mcp-bastion performs, mapped to the frameworks it exercises. The mappings are
 drawn from the [mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench) threat–control
-crosswalk and reflect what the benchmark **measured** mcp-bastion doing (19 of 24 attack vectors), at
-zero false positives. Last updated 2026-07-15._
+crosswalk and reflect what the benchmark **measured** mcp-bastion doing (19 of 24 attack vectors — 11
+of them **enforced/blocked** by default, at **63% weighted coverage**), at zero false positives. Last
+updated 2026-07-15._
 
 > **How the mapping is defined.** The checks are **threat-driven** — the vectors come from the
 > 2025–2026 MCP-security research literature (see References) — and each is **crosswalked to recognized
@@ -18,27 +19,27 @@ zero false positives. Last updated 2026-07-15._
 
 ## The mapping
 
-|   # | Threat / check                              | Bastion mechanism                   | Action         | Layer                 | STRIDE                              | NIST AI RMF          | OWASP LLM 2025 | OWASP Agentic 2026 |
-| --: | ------------------------------------------- | ----------------------------------- | -------------- | --------------------- | ----------------------------------- | -------------------- | -------------- | ------------------ |
-|   1 | Tool poisoning                              | Description scanning (`scanTool`)   | 🟡 detect      | tool                  | Tampering, EoP                      | MAP, MEASURE, MANAGE | LLM01, LLM06   | ASI01, ASI02       |
-|   2 | Tool shadowing / name collision             | Cross-server name-collision check   | 🟡 detect      | client                | Spoofing, Tampering                 | MAP, MANAGE          | LLM01, LLM03   | ASI01, ASI04       |
-|   3 | Rug pull (definition mutation)              | Definition pinning + hash compare   | 🟢 **enforce** | tool                  | Tampering                           | MEASURE, MANAGE      | LLM03, LLM06   | ASI04              |
-|   4 | Out-of-scope parameter injection            | Argument schema validation          | 🟡 detect      | tool                  | Tampering, EoP                      | MEASURE, MANAGE      | LLM05, LLM06   | ASI02              |
-|   5 | Prompt injection via tool results           | Response content scanning           | 🟡 detect      | tool                  | Tampering                           | MEASURE, MANAGE      | LLM01, LLM05   | ASI01              |
-|   6 | Indirect / retrieval injection              | Response content scanning           | 🟡 detect      | tool                  | Tampering                           | MEASURE, MANAGE      | LLM01          | ASI01              |
-|   7 | Cross-tool exfiltration (confused deputy)   | Sensitive-argument scanning         | 🟡 detect      | client                | InfoDisclosure, EoP                 | MAP, MEASURE, MANAGE | LLM02, LLM06   | ASI02, ASI03       |
-|   8 | Schema / validation bypass                  | Argument schema validation          | 🟡 detect      | server                | Tampering, EoP                      | MEASURE, MANAGE      | LLM05          | ASI02              |
-|   9 | Man-in-the-middle (transport)               | Plaintext-HTTP transport check      | 🟡 detect      | transport             | Tampering, InfoDisclosure, Spoofing | MANAGE               | LLM02          | ASI03              |
-|  10 | DNS rebinding (local servers)               | Origin allowlist on loopback (403)  | 🟢 **enforce** | transport             | Spoofing, EoP                       | MANAGE               | LLM06          | ASI03              |
-|  11 | Excessive permission / privilege escalation | Least-privilege scope check         | 🟡 detect      | host-orchestration    | EoP                                 | GOVERN, MAP, MANAGE  | LLM06          | ASI03              |
-|  12 | Credential / token theft via passthrough    | Response + secret scanning          | 🟡 detect      | host-orchestration    | InfoDisclosure, EoP                 | GOVERN, MANAGE       | LLM02, LLM06   | ASI03              |
-|  13 | System-prompt / context leakage             | Response content scanning           | 🟡 detect      | client                | InfoDisclosure                      | MEASURE, MANAGE      | LLM07, LLM02   | ASI01              |
-|  14 | Mid-session tool injection (MSTI)           | Definition pinning + hash compare   | 🟢 **enforce** | client                | Tampering, Spoofing                 | MEASURE, MANAGE      | LLM01, LLM06   | ASI01, ASI04       |
-|  15 | Multi-tool split poisoning (ShareLock)      | Cross-tool correlation (v0.4)       | 🟡 detect      | tool                  | Tampering                           | MEASURE, MANAGE      | LLM01, LLM03   | ASI01, ASI04       |
-|  16 | Command injection in tool execution         | Argument command-injection scan     | 🟡 detect      | server                | Tampering, EoP                      | MEASURE, MANAGE      | LLM05          | ASI02, ASI05       |
-|  17 | Configuration drift                         | Config-snapshot TOFU pin + diff     | 🟡 detect      | server                | Tampering                           | MAP, MEASURE, MANAGE | LLM06          | ASI04              |
-|  18 | Server impersonation / identity spoofing    | Server-identity pin (TOFU) + verify | 🟢 **enforce** | registry-supply-chain | Spoofing, Tampering                 | MANAGE               | LLM03          | ASI03, ASI04       |
-|  19 | Tool-transfer / cross-server exfiltration   | Cross-server data-flow (taint)      | 🟡 detect      | host-orchestration    | InfoDisclosure, EoP                 | MEASURE, MANAGE      | LLM02, LLM06   | ASI02, ASI03       |
+|   # | Threat / check                              | Bastion mechanism                    | Action         | Layer                 | STRIDE                              | NIST AI RMF          | OWASP LLM 2025 | OWASP Agentic 2026 |
+| --: | ------------------------------------------- | ------------------------------------ | -------------- | --------------------- | ----------------------------------- | -------------------- | -------------- | ------------------ |
+|   1 | Tool poisoning                              | Description scanning (`scanTool`)    | 🟡 detect      | tool                  | Tampering, EoP                      | MAP, MEASURE, MANAGE | LLM01, LLM06   | ASI01, ASI02       |
+|   2 | Tool shadowing / name collision             | Cross-server name-collision check    | 🟡 detect      | client                | Spoofing, Tampering                 | MAP, MANAGE          | LLM01, LLM03   | ASI01, ASI04       |
+|   3 | Rug pull (definition mutation)              | Definition pinning + hash compare    | 🟢 **enforce** | tool                  | Tampering                           | MEASURE, MANAGE      | LLM03, LLM06   | ASI04              |
+|   4 | Out-of-scope parameter injection            | Argument schema validation           | 🟢 **enforce** | tool                  | Tampering, EoP                      | MEASURE, MANAGE      | LLM05, LLM06   | ASI02              |
+|   5 | Prompt injection via tool results           | Response content scanning            | 🟡 detect      | tool                  | Tampering                           | MEASURE, MANAGE      | LLM01, LLM05   | ASI01              |
+|   6 | Indirect / retrieval injection              | Response scanning + inline DLP       | 🟢 **enforce** | tool                  | Tampering                           | MEASURE, MANAGE      | LLM01          | ASI01              |
+|   7 | Cross-tool exfiltration (confused deputy)   | Sensitive-argument scanning          | 🟢 **enforce** | client                | InfoDisclosure, EoP                 | MAP, MEASURE, MANAGE | LLM02, LLM06   | ASI02, ASI03       |
+|   8 | Schema / validation bypass                  | Argument schema validation           | 🟢 **enforce** | server                | Tampering, EoP                      | MEASURE, MANAGE      | LLM05          | ASI02              |
+|   9 | Man-in-the-middle (transport)               | Plaintext-HTTP transport check       | 🟡 detect      | transport             | Tampering, InfoDisclosure, Spoofing | MANAGE               | LLM02          | ASI03              |
+|  10 | DNS rebinding (local servers)               | Origin allowlist on loopback (403)   | 🟢 **enforce** | transport             | Spoofing, EoP                       | MANAGE               | LLM06          | ASI03              |
+|  11 | Excessive permission / privilege escalation | Least-privilege scope check          | 🟡 detect      | host-orchestration    | EoP                                 | GOVERN, MAP, MANAGE  | LLM06          | ASI03              |
+|  12 | Credential / token theft via passthrough    | Response scan + inline DLP redaction | 🟢 **enforce** | host-orchestration    | InfoDisclosure, EoP                 | GOVERN, MANAGE       | LLM02, LLM06   | ASI03              |
+|  13 | System-prompt / context leakage             | Response content scanning            | 🟡 detect      | client                | InfoDisclosure                      | MEASURE, MANAGE      | LLM07, LLM02   | ASI01              |
+|  14 | Mid-session tool injection (MSTI)           | Definition pinning + hash compare    | 🟢 **enforce** | client                | Tampering, Spoofing                 | MEASURE, MANAGE      | LLM01, LLM06   | ASI01, ASI04       |
+|  15 | Multi-tool split poisoning (ShareLock)      | Cross-tool correlation (v0.4)        | 🟡 detect      | tool                  | Tampering                           | MEASURE, MANAGE      | LLM01, LLM03   | ASI01, ASI04       |
+|  16 | Command injection in tool execution         | Argument command-injection scan      | 🟢 **enforce** | server                | Tampering, EoP                      | MEASURE, MANAGE      | LLM05          | ASI02, ASI05       |
+|  17 | Configuration drift                         | Config-snapshot TOFU pin + diff      | 🟡 detect      | server                | Tampering                           | MAP, MEASURE, MANAGE | LLM06          | ASI04              |
+|  18 | Server impersonation / identity spoofing    | Server-identity pin (TOFU) + verify  | 🟢 **enforce** | registry-supply-chain | Spoofing, Tampering                 | MANAGE               | LLM03          | ASI03, ASI04       |
+|  19 | Tool-transfer / cross-server exfiltration   | Cross-server data-flow (taint)       | 🟢 **enforce** | host-orchestration    | InfoDisclosure, EoP                 | MEASURE, MANAGE      | LLM02, LLM06   | ASI02, ASI03       |
 
 🟢 **enforce** = blocks the call · 🟡 detect = flags/warns (blocking is opt-in via config) · EoP = Elevation of Privilege
 
@@ -51,11 +52,21 @@ secret-sharing, so a sufficiently disguised variant can still evade it. When we 
 
 **Note on the v0.5 checks (rows 16–19).** Command injection, configuration drift, server-identity
 pinning, and cross-server data-flow (taint) tracking each closed a vector that **no** measured tool on
-the mcp-defense-bench leaderboard covered, taking bastion from 38% to **48% (11.5/24)** at zero false
-positives. Cross-server taint uses **exact-token propagation** — a credential returned by one server
-reappearing in an argument to a different server — which only an aggregating proxy can observe; it is
-a heuristic for the staging-and-egress signal, not a proof. Server-identity change **enforces** (blocks
-by default, like rug-pull); the others default to warn.
+the mcp-defense-bench leaderboard covered, taking bastion from 38% to 48% at zero false positives.
+Cross-server taint uses **exact-token propagation** — a credential returned by one server reappearing
+in an argument to a different server — which only an aggregating proxy can observe; it is a heuristic
+for the staging-and-egress signal, not a proof.
+
+**Note on the v0.6 "depth" release.** Three changes deepened the defense at zero false positives,
+raising measured coverage to **63% (15.0/24)**: (1) **evasion normalization** — heuristics run over
+NFKC / homoglyph-folded / base64-decoded views, so obfuscated payloads are caught the same as plain
+ones (evasion robustness 1/3 → 3/3); (2) **inline DLP redaction** — credential values are stripped
+from tool results, promoting the credential-theft and secret-in-fetched-doc vectors to **enforce**;
+and (3) the **`balanced` enforcement profile** (default) — the deterministic, near-zero-FP checks
+(argument/schema, command-injection, cross-server exfiltration) now **block** by default, joining
+rug-pull and identity change, so **11 of 19** covered vectors are enforced rather than merely detected.
+Heuristic checks (description/response content) still warn. Set `enforcementProfile: "observe"` to
+restore warn-on-everything.
 
 ## Legend
 
