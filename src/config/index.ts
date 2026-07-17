@@ -3,7 +3,7 @@
  *
  * @packageDocumentation
  */
-export { loadConfig } from "./loader.js";
+export { loadConfig, defaultConfig } from "./loader.js";
 export {
   BastionConfigSchema,
   ServerConfigSchema,

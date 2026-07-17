@@ -3,7 +3,7 @@ import { writeFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig } from "../src/config/index.js";
+import { loadConfig, defaultConfig } from "../src/config/index.js";
 
 async function tmpConfig(contents: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "bastion-cfg-"));
@@ -23,6 +23,14 @@ describe("loadConfig", () => {
     if (fs.transport === "stdio") expect(fs.command).toBe("node");
     expect(cfg.reconnect.auto).toBe(true); // default applied
     expect(cfg.namespace.separator).toBe("__"); // default applied
+  });
+
+  it("defaultConfig() yields a valid zero-upstream config with defaults applied", () => {
+    const cfg = defaultConfig();
+    expect(Object.keys(cfg.servers)).toHaveLength(0); // no upstreams
+    expect(cfg.reconnect.auto).toBe(true); // section defaults present
+    expect(cfg.namespace.separator).toBe("__");
+    expect(cfg.listen.mode).toBe("stdio");
   });
 
   it("rejects a config with no servers", async () => {

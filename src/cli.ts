@@ -12,7 +12,7 @@
 import { Command } from "commander";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { loadConfig } from "./config/index.js";
+import { loadConfig, defaultConfig } from "./config/index.js";
 import { BASTION_VERSION, UpstreamManager } from "./core/index.js";
 import { logger } from "./observability/index.js";
 import { buildBastionServer, startHttpServer } from "./proxy/index.js";
@@ -23,7 +23,10 @@ program
   .name("mcp-bastion")
   .description("Reliability + security proxy for the Model Context Protocol (MCP)")
   .version(BASTION_VERSION)
-  .requiredOption("-c, --config <path>", "path to the Bastion config file")
+  .option(
+    "-c, --config <path>",
+    "path to the Bastion config file (omit to start with no upstreams — exposes only Bastion's control tools, useful for a zero-config smoke test or catalog introspection)",
+  )
   .option("--http <port>", "serve over Streamable HTTP on <port> (overrides listen.mode)")
   .action(run);
 
@@ -33,8 +36,13 @@ program.parseAsync(process.argv).catch((err) => {
 });
 
 /** Boot the proxy for the given CLI options. */
-async function run(opts: { config: string; http?: string }): Promise<void> {
-  const config = await loadConfig(opts.config);
+async function run(opts: { config?: string; http?: string }): Promise<void> {
+  const config = opts.config ? await loadConfig(opts.config) : defaultConfig();
+  if (!opts.config) {
+    logger.warn(
+      "no --config provided: starting with no upstream servers, so only Bastion's control tools are exposed. Pass --config <path> to put Bastion in front of your MCP servers.",
+    );
+  }
   const manager = new UpstreamManager(config);
 
   // Connect upstreams first so the initial tools/list is populated.

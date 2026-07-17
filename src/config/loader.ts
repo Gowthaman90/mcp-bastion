@@ -45,3 +45,16 @@ export async function loadConfig(path: string): Promise<BastionConfig> {
 
   return parsed.data;
 }
+
+/**
+ * Build a fully-defaulted configuration with no upstream servers.
+ *
+ * Used when the CLI is started without `--config`: Bastion still comes up as a
+ * valid MCP server exposing only its own `bastion__*` control tools. That is
+ * enough for a zero-config smoke test (`npx -y mcp-bastion`) and for catalog
+ * introspection (e.g. Glama listing a `tools/list`). Add real upstreams by
+ * passing `--config <path>`.
+ */
+export function defaultConfig(): BastionConfig {
+  return BastionConfigSchema.parse({ servers: {} });
+}
