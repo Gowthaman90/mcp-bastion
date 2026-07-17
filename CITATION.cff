@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use mcp-bastion, please cite it."
+title: "mcp-bastion: A Reliability & Security Proxy for the Model Context Protocol"
+type: software
+authors:
+  - given-names: Gowthaman
+    family-names: Arumugam
+    email: agowthaman90@gmail.com
+    affiliation: "Independent Researcher"
+repository-code: "https://github.com/Gowthaman90/mcp-bastion"
+url: "https://github.com/Gowthaman90/mcp-bastion"
+abstract: >-
+  A client-agnostic reliability and security proxy for the Model Context
+  Protocol (MCP). It provides self-healing connections with automatic
+  reconnection, runtime tool-security (tool-definition pinning / rug-pull
+  detection, poisoning inspection, and shadowing detection), and a
+  compliance-mapped audit trail crosswalked to the NIST AI RMF and the OWASP
+  Top 10 for LLM Applications. Measured on the vendor-neutral mcp-defense-bench,
+  it covers 63% of the MCP attack surface (15.0 of 24 vectors) at zero false
+  positives.
+license: Apache-2.0
+keywords:
+  - Model Context Protocol
+  - MCP
+  - MCP proxy
+  - AI security
+  - LLM security
+  - tool poisoning
+  - prompt injection
+  - NIST AI RMF
+  - OWASP LLM Top 10

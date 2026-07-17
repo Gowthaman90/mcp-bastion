@@ -60,7 +60,7 @@
     "tool-poisoning"
   ],
   "license": "Apache-2.0",
-  "author": "mcp-bastion contributors",
+  "author": "Gowthaman Arumugam <agowthaman90@gmail.com> (https://github.com/Gowthaman90)",
   "homepage": "https://github.com/Gowthaman90/mcp-bastion#readme",
   "repository": {
     "type": "git",

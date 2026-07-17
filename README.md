@@ -35,6 +35,8 @@ your servers run unchanged, and removing Bastion is a one-line config revert.
 
 📖 **Launch story:** [Medium](https://medium.com/p/e74f638e9e15) · [dev.to](https://dev.to/gowthaman90/the-mcp-reliability-security-gap-and-an-open-source-proxy-that-fills-it-3ppo)
 
+👤 **Created & maintained by [Gowthaman Arumugam](https://github.com/Gowthaman90)** — Independent Researcher. Companion benchmark: [mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench).
+
 ## Contents
 
 - [Why](#why)
@@ -360,4 +362,4 @@ the disclosure process.
 
 ## License
 
-[Apache-2.0](./LICENSE) © mcp-bastion contributors
+[Apache-2.0](./LICENSE) © Gowthaman Arumugam and mcp-bastion contributors
