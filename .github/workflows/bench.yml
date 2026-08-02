@@ -13,8 +13,12 @@ permissions:
   contents: read
 
 env:
-  # Weighted-coverage floor (out of 24 vectors). Bump this when a release raises coverage.
-  BENCH_FLOOR: "15.0"
+  # Weighted-coverage floor (RobustCoverage, out of 24 vectors). Bump this when a release raises coverage.
+  # Lowered 15.0 -> 13.0 (2026-08-01): mcp-defense-bench's 2026-07-26 scoring correction (per-vector
+  # max-aggregation fix, headline renamed RobustCoverage/CorpusRobustCoverage) honestly reduced the reported
+  # score 63%->55% (15.1->13.3/24) with zero false positives — a stricter metric, not a defense regression.
+  # The floor now tracks that corrected baseline (measured 13.3; floor 13.0 leaves a small margin).
+  BENCH_FLOOR: "13.0"
 
 jobs:
   bench:
