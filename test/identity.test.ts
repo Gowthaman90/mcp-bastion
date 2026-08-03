@@ -63,7 +63,10 @@ describe("hashServerIdentity (TOFU fingerprint)", () => {
 });
 
 describe("SecurityEngine.observeIdentity (trust-on-first-use)", () => {
-  const engine = () => new SecurityEngine(SecurityConfigSchema.parse({}), "__");
+  // pinServerIdentity is reserved / opt-in (default off until wired into connect); enable it to
+  // exercise the engine's identity-pin logic directly.
+  const engine = () =>
+    new SecurityEngine(SecurityConfigSchema.parse({ pinServerIdentity: true }), "__");
   // A verified identity, so only the TOFU change-detection dimension is under test here.
   const acme: ServerIdentity = {
     endpoint: "https://mcp.acme.example",

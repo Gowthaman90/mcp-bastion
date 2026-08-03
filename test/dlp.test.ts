@@ -45,4 +45,21 @@ describe("redactSecrets (inline DLP)", () => {
     const s = "order_id=48210001 was created";
     expect(redactSecrets(s).redactions).toBe(0);
   });
+
+  it("redacts a modern OpenAI project-style key with interior hyphens (M7)", () => {
+    // Assembled at runtime so the source carries no secret-like literal (avoids secret scanners).
+    // The interior "-" is the point: the old `[A-Za-z0-9]{20,}` pattern stopped at it and missed the key.
+    const key = "sk-" + ["proj", "AAAAAAAAAA", "BBBBBBBBBB", "CCCC"].join("-");
+    // No `=`/`:` and no credential keyword adjacent, so only the sk- pattern can catch it.
+    const { text, redactions } = redactSecrets(`leaked token ${key} over the wire`);
+    expect(redactions).toBeGreaterThan(0);
+    expect(text).not.toContain(key);
+  });
+
+  it("still redacts a legacy OpenAI-style key", () => {
+    const key = "sk-" + "abcdefghij".repeat(3) + "012345";
+    const { text, redactions } = redactSecrets(`bare ${key} here`);
+    expect(redactions).toBeGreaterThan(0);
+    expect(text).not.toContain(key);
+  });
 });

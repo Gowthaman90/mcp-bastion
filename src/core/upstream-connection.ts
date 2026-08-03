@@ -150,6 +150,21 @@ export class UpstreamConnection {
       { capabilities: {} },
     );
 
+    // Re-list tools when the upstream announces a change. Without this, the cached tool set (and thus
+    // rug-pull detection) only refreshes at connect, so a mid-session definition swap advertised via
+    // `notifications/tools/list_changed` would be missed until the next reconnect. Refreshing the cache
+    // here means the change is re-hashed and caught by the security re-sync before the next tool call.
+    client.fallbackNotificationHandler = async (notification) => {
+      if (notification.method === "notifications/tools/list_changed") {
+        await this.refreshTools().catch((err) =>
+          logger.warn(
+            { server: this.name, err: (err as Error)?.message ?? String(err) },
+            "failed to refresh tools after list_changed",
+          ),
+        );
+      }
+    };
+
     try {
       await client.connect(transport);
       this.client = client;

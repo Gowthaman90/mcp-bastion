@@ -35,8 +35,13 @@ function canonicalize(value: unknown): string {
 export function hashToolDefinition(tool: Tool): string {
   const subset = {
     name: tool.name,
+    // `title` and `annotations` are model-visible and gate client behavior (e.g. destructiveHint /
+    // readOnlyHint drive auto-approval), so a change to them is a rug pull the pin must catch.
+    title: tool.title ?? null,
     description: tool.description ?? "",
     inputSchema: tool.inputSchema ?? {},
+    outputSchema: tool.outputSchema ?? null,
+    annotations: tool.annotations ?? null,
   };
   return createHash("sha256").update(canonicalize(subset)).digest("hex");
 }

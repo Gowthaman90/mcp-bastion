@@ -37,4 +37,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   return { content: [{ type: "text", text: typeof echo === "string" ? echo : "ok" }] };
 });
 
+// When the description file changes, announce a tool-list change so the client re-lists — this lets
+// tests exercise mid-session rug-pull detection (no reconnect) via notifications/tools/list_changed.
+try {
+  fs.watch(descFile, () => {
+    server.notification({ method: "notifications/tools/list_changed" }).catch(() => {});
+  });
+} catch {
+  /* file may be absent in some tests — ignore */
+}
+
 await server.connect(new StdioServerTransport());

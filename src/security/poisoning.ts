@@ -122,7 +122,14 @@ export function scanText(text: string, normalize = true): SecurityFinding[] {
  * @returns All findings across the tool's name and description.
  */
 export function scanTool(tool: Tool, normalize = true): SecurityFinding[] {
-  return [...scanText(tool.name ?? "", normalize), ...scanText(tool.description ?? "", normalize)];
+  // Scan every model-visible string: name, title, description, and the annotation title — an injection
+  // payload hidden in `title`/`annotations.title` reaches the model just like one in the description.
+  return [
+    ...scanText(tool.name ?? "", normalize),
+    ...scanText(tool.title ?? "", normalize),
+    ...scanText(tool.description ?? "", normalize),
+    ...scanText(tool.annotations?.title ?? "", normalize),
+  ];
 }
 
 /** Whether any finding is at least the given severity. */

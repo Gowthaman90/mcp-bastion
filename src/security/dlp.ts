@@ -20,7 +20,7 @@ const SECRET_PATTERNS: RegExp[] = [
   /\bAKIA[0-9A-Z]{16}\b/g, // AWS access key id
   /\bASIA[0-9A-Z]{16}\b/g, // AWS temporary access key id
   /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, // GitHub tokens (ghp_/gho_/ghu_/ghs_/ghr_)
-  /\bsk-[A-Za-z0-9]{20,}\b/g, // OpenAI-style secret keys
+  /\bsk-[A-Za-z0-9_-]{20,}/g, // OpenAI-style secret keys (incl. sk-proj-/sk-svcacct-/sk-admin- with interior -/_)
   /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, // Slack tokens
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, // PEM private keys
 ];

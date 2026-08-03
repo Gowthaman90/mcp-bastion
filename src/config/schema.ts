@@ -186,14 +186,21 @@ export const SecurityConfigSchema = z
      * Pin each server's effective configuration snapshot on first observation and flag
      * security-relevant *weakening* on later observations (TLS downgrade, host allowlist widened
      * with a wildcard, a protective flag disabled) — configuration drift.
+     *
+     * RESERVED — not yet enforced: the config snapshot is not wired into the connect path yet, so this
+     * defaults OFF rather than imply a guarantee that is not active. Tracked for a future release.
      */
-    detectConfigDrift: z.boolean().default(true),
+    detectConfigDrift: z.boolean().default(false),
     /**
      * Verify server identity and pin it (trust-on-first-use): flag a claimed identity with no
      * verified binding, and detect an endpoint/name/TLS-fingerprint change on a later connect
      * (server impersonation). Version/protocol changes do not trip the pin.
+     *
+     * RESERVED — not yet enforced: identity observation (incl. TLS fingerprinting) is not wired into
+     * the connect path yet, so this defaults OFF rather than imply a guarantee that is not active.
+     * Tracked for a future release.
      */
-    pinServerIdentity: z.boolean().default(true),
+    pinServerIdentity: z.boolean().default(false),
     /**
      * What to do when a server's *pinned* identity changes mid-session. Defaults from the profile
      * (`block` under `balanced`), since a mid-session identity change is a strong impersonation signal.
