@@ -101,8 +101,8 @@ only per-client difference is where you put a few lines of config.
 - 🛡️ **Runtime security** _(new in v0.2)_ — pins each tool's definition and blocks "rug pulls" (a
   server changing a tool after approval); heuristically inspects descriptions for poisoning; detects
   cross-server shadowing. See [Runtime security](#runtime-security).
-- 📝 **Audit & compliance** _(new in v0.3)_ — structured, tamper-evident audit events to pluggable
-  sinks (console / file / webhook), mapped to NIST AI RMF & OWASP LLM Top 10. See
+- 📝 **Audit & compliance** _(new in v0.3, opt-in)_ — structured, integrity-hash-chained audit events to
+  pluggable sinks (console / file / webhook), mapped to NIST AI RMF & OWASP LLM Top 10. See
   [Audit & compliance](#audit--compliance).
 - 🪶 **Non-invasive & reversible** — your servers run unchanged; uninstall is a config revert.
 - 🧱 **Enterprise-grade codebase** — strict TypeScript, layered architecture, ESLint + Prettier, and
@@ -149,7 +149,7 @@ full set of options.
 
 > 🔒 **Security is on by default.** Out of the box, Bastion runs the `balanced` enforcement profile:
 > it **blocks** high-confidence attacks (rug-pulls, argument/command injection, cross-server
-> exfiltration, server-identity changes) and **warns** on heuristic ones (description/response
+> exfiltration) and **warns** on heuristic ones (description/response
 > poisoning), while redacting leaked secrets from tool results. Set `security.enforcementProfile` to
 > `observe` (warn-only) or `strict` (block-all), or tune any individual control — see
 > [Runtime security](#runtime-security).
@@ -176,8 +176,12 @@ only standard MCP calls:
 | `bastion__status`     | Health of every proxied server: connected / disconnected / reconnecting / failed, tool counts, last error. |
 | `bastion__reconnect`  | Reconnect a named server (argument: `{ "server": "<name>" }`) without human intervention.                  |
 | `bastion__security`   | Per-tool security report: pin status (approved vs changed), poisoning findings, and shadowing.             |
-| `bastion__approve`    | Re-approve a changed tool (arguments: `{ "server": "...", "tool": "..." }`) to clear a rug-pull block.     |
 | `bastion__compliance` | Audit summary of recent activity mapped to NIST AI RMF / OWASP LLM Top 10 (requires `audit.enabled`).      |
+
+> **Re-approval is operator-only.** Clearing a rug-pull block is a security authority, so it is **not** an
+> agent-callable tool — a prompt-injected agent must not be able to re-approve the very tool it was blocked
+> from. A changed tool stays blocked until an operator clears it out-of-band; `bastion__approve` is not
+> advertised and a client call to it is refused.
 
 ## Configuration
 
@@ -229,9 +233,9 @@ _New in v0.2._ Bastion adds a security layer in the tool-call path (an intercept
 by default:
 
 - **Rug-pull detection (tool pinning).** Each tool's definition is pinned on first use. If a server
-  later changes that definition, the tool is blocked (`onRugPull: "block"`) until you review it and
-  re-approve with `bastion__approve`. This catches a server that looks benign at install time and
-  turns malicious afterward.
+  later changes that definition, the tool is blocked (`onRugPull: "block"`) until an operator reviews it
+  and re-approves it out-of-band (operator-only — not an agent-callable tool). This catches a server that
+  looks benign at install time and turns malicious afterward.
 - **Poisoning inspection.** Tool names and descriptions are scanned for manipulation heuristics
   (instruction override, secret access, data exfiltration, covert instructions, embedded directives,
   hidden/zero-width characters). Because heuristics can false-positive, the default is `warn` (logged
@@ -250,7 +254,7 @@ including calls blocked by the security layer:
 "audit": {
   "enabled": true,
   "includeArgs": "redacted",     // none | redacted | full
-  "tamperEvident": true,          // hash-chain events
+  "tamperEvident": true,          // integrity hash-chain (detects naive edits; unkeyed, not signed)
   "sinks": [
     { "type": "file", "path": "./bastion-audit.jsonl" },
     { "type": "webhook", "url": "https://collector.example/v1/audit" }
@@ -263,10 +267,16 @@ including calls blocked by the security layer:
   backend). The sink interface makes new destinations additive.
 - **Compliance mapping.** Each event is mapped to **NIST AI RMF** functions and **OWASP LLM Top 10**
   categories; `bastion__compliance` returns an aggregate report of recent activity.
-- **Tamper-evidence.** With `tamperEvident`, events are hash-chained; the exported `verifyChain` helper
-  detects any retroactive edit or deletion.
-- **Redaction.** Arguments are omitted by default; set `includeArgs` to `redacted` to keep structure
-  while masking sensitive keys.
+- **Integrity hash chain.** With `tamperEvident`, events are linked by a SHA-256 hash chain, and the
+  exported `verifyChain` helper detects naive or partial edits within an intact log. The chain is
+  **unkeyed**: a party who can rewrite the log file can recompute a consistent chain, and truncating the
+  most-recent events links cleanly — so treat this as corruption-detection, **not** cryptographic
+  tamper-proofing. For stronger guarantees, ship events to an append-only external sink (webhook / OTLP →
+  a WORM store or SIEM). Keyed/signed attestation is on the roadmap.
+- **Redaction (best-effort).** Arguments are omitted by default; `includeArgs: "redacted"` keeps structure
+  while masking values under known credential key-names and common secret patterns. It is a heuristic, not
+  a guarantee — a secret under an unrecognized key can still be recorded, so prefer `none` for
+  high-sensitivity deployments.
 
 ## Standards alignment
 

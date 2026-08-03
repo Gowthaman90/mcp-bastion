@@ -53,7 +53,10 @@ describe("config-drift detection", () => {
 });
 
 describe("SecurityEngine.observeConfig (trust-on-first-use drift)", () => {
-  const engine = () => new SecurityEngine(SecurityConfigSchema.parse({}), "__");
+  // detectConfigDrift is reserved / opt-in (default off until wired into connect); enable it to
+  // exercise the engine's config-drift logic directly.
+  const engine = () =>
+    new SecurityEngine(SecurityConfigSchema.parse({ detectConfigDrift: true }), "__");
 
   it("pins the first snapshot and reports no drift for it", () => {
     const e = engine();

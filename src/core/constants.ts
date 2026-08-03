@@ -13,7 +13,7 @@
 export const BASTION_NAME = "mcp-bastion";
 
 /** Current Bastion version. Kept in sync with `package.json` — enforced by test/version.test.ts. */
-export const BASTION_VERSION = "0.6.3";
+export const BASTION_VERSION = "0.7.0";
 
 /** Namespace under which Bastion exposes its own control tools. */
 export const CONTROL_NAMESPACE = "bastion";
@@ -26,7 +26,11 @@ export const ControlAction = {
   Reconnect: "reconnect",
   /** Report the security state of proxied tools (pinning, poisoning, shadowing). */
   Security: "security",
-  /** Re-approve a tool whose definition changed (clears a rug-pull block). */
+  /**
+   * Re-approve a tool whose definition changed (clears a rug-pull block).
+   * **Operator-only:** never advertised on the client surface, and a client call to it
+   * is refused — clearing a block is a security authority the protected agent must not hold.
+   */
   Approve: "approve",
   /** Report an audit/compliance summary mapped to governance frameworks. */
   Compliance: "compliance",

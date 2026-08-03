@@ -6,6 +6,50 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-26
+
+### Security
+
+- **Operator-only re-approval (authority separation).** `bastion__approve` is **no longer exposed on the
+  client tool surface**, and a client-channel call to it is refused. Clearing a rug-pull block is a
+  _security_ authority, not a recovery action: previously a prompt-injected agent shown a changed
+  (malicious) tool definition could call the re-approval tool itself and clear its own block — detection
+  held, but approval authority was not separated from the agent being protected. Recovery actions
+  (`bastion__status`, `bastion__reconnect`, `bastion__security`, `bastion__compliance`) remain
+  agent-callable; re-approving a changed tool is now operator-only / out-of-band. Added a regression test
+  asserting a client `bastion__approve` call is refused and clears no block. Reported by **Massimiliano
+  Brighindi**. Maps to OWASP Agentic ASI03 (Identity & Privilege Abuse).
+  - **BREAKING:** `bastion__approve` is no longer a callable client tool.
+- **Fixed a ReDoS in the command-injection scanner.** The backtick rule used two unbounded ``[^`]*``
+  quantifiers, so a hostile tool-call argument (one backtick, many command verbs, no closing backtick)
+  cost O(n²) CPU. Rewrote it to a single bounded quantifier and added a per-argument input-size cap.
+- **Rug-pull hashing and the poisoning scanner now cover `title`, `annotations`, and `outputSchema`** —
+  not just name/description/inputSchema. A rug pull or injection through those model-visible fields (e.g.
+  flipping `annotations.destructiveHint`, or a payload in `title`) is now detected. (Tools that use those
+  fields re-pin once on upgrade.)
+- **DLP redaction now catches modern OpenAI keys** (`sk-proj-…`, `sk-svcacct-…`, `sk-admin-…`), which the
+  previous pattern missed — they no longer leak into agent context or the audit log.
+- **Command-injection detection now flags path-qualified binaries** after a separator (e.g. `; /bin/rm`).
+- **Rug-pull detection now handles mid-session `tools/list_changed`.** Previously the cached tool set (and
+  thus rug-pull detection) refreshed only at (re)connect, so a live definition swap could be missed until
+  the next reconnect. Bastion now re-lists on the notification and catches the change before the next call.
+- **Pin state is now sticky across a tool disappearing.** A tool that vanishes and returns with a changed
+  definition is still flagged as a rug pull, instead of being silently re-pinned as trusted.
+- **Server-identity pinning and config-drift detection now default OFF (reserved, opt-in).** They were
+  installed by default but never wired into the connect path, implying a guarantee that was not active;
+  they are honestly gated off until wired. "Server-identity changes" was removed from the default-blocked
+  list accordingly.
+- **Audit claims tightened** to match the implementation: the hash chain is described as an integrity
+  (corruption-detecting) chain, not cryptographic tamper-proofing; redaction is documented as best-effort.
+
+_These items were surfaced by an internal security self-review._
+
+### Note
+
+- An ergonomic operator re-approval path — a signed, one-time grant bound to server + old digest + new
+  digest + expiry — is planned as a follow-up. Until then, a changed tool stays blocked until an operator
+  clears it out-of-band.
+
 ## [0.6.1] - 2026-07-16
 
 ### Added

@@ -33,6 +33,12 @@ describe("loadConfig", () => {
     expect(cfg.listen.mode).toBe("stdio");
   });
 
+  it("defaults reserved (unwired) defenses OFF so they don't imply false assurance (H1)", () => {
+    const cfg = defaultConfig();
+    expect(cfg.security.pinServerIdentity).toBe(false);
+    expect(cfg.security.detectConfigDrift).toBe(false);
+  });
+
   it("rejects a config with no servers", async () => {
     const path = await tmpConfig(JSON.stringify({ servers: {} }));
     await expect(loadConfig(path)).rejects.toThrow(/no upstream servers/i);

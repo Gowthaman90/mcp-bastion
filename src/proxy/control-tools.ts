@@ -7,6 +7,14 @@
  * because they are part of the client-facing MCP surface, and they delegate to
  * the core {@link UpstreamManager} for the actual work.
  *
+ * **Authority separation (security):** only *recovery* actions (status, reconnect,
+ * security report, compliance) are exposed to the client. Re-approving a changed
+ * tool — clearing a rug-pull block — is a *security* authority and is deliberately
+ * NOT on the client surface: a prompt-injected agent must never be able to clear
+ * the very block that protects it. `bastion__approve` is therefore not advertised,
+ * and an explicit call to it over the client channel is refused (see
+ * {@link handleControlTool}). Re-approval is operator-only / out-of-band.
+ *
  * @packageDocumentation
  */
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -54,21 +62,10 @@ export function buildControlTools(separator: string): Tool[] {
         "triggered, and whether another server exposes a tool with the same name (shadowing).",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
-    {
-      name: controlToolName(ControlAction.Approve, separator),
-      description:
-        "Re-approve a tool whose definition changed, clearing a rug-pull block so it can be called " +
-        "again. Only do this after reviewing and trusting the change.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          server: { type: "string", description: "Server that owns the tool." },
-          tool: { type: "string", description: "The tool's original (un-namespaced) name." },
-        },
-        required: ["server", "tool"],
-        additionalProperties: false,
-      },
-    },
+    // NOTE: `bastion__approve` is intentionally NOT exposed here. Clearing a rug-pull
+    // block is a security authority, not a recovery action — exposing it to the client
+    // would let a prompt-injected agent re-approve the malicious tool it was blocked from.
+    // Re-approval is operator-only / out-of-band; a client call to it is refused below.
     {
       name: controlToolName(ControlAction.Compliance, separator),
       description:
@@ -121,15 +118,25 @@ export async function handleControlTool(
   }
 
   if (name === controlToolName(ControlAction.Approve, separator)) {
-    const server = typeof args?.server === "string" ? args.server : undefined;
-    const tool = typeof args?.tool === "string" ? args.tool : undefined;
-    if (!server || !tool) {
-      return textResult('Missing required arguments "server" and "tool" (strings).', true);
-    }
-    const ok = manager.approveTool(server, tool);
+    // Refuse: re-approving a changed tool is a security authority, not a client-callable
+    // recovery action. Detecting a boundary violation is not authority to clear it — a
+    // prompt-injected agent must not be able to re-approve the malicious tool it was
+    // blocked from. Re-approval must happen out-of-band via an operator, never over this
+    // (model-reachable) channel. This branch is defense-in-depth: the tool is not
+    // advertised (see buildControlTools), and a hardcoded call is rejected here.
     return textResult(
-      JSON.stringify({ ok, server, tool, message: ok ? "re-approved" : "no such tool" }, null, 2),
-      !ok,
+      JSON.stringify(
+        {
+          ok: false,
+          refused: "operator-only",
+          message:
+            "Re-approval is an operator action and is not available over the client tool channel. " +
+            "A changed tool stays blocked until an operator clears it out-of-band.",
+        },
+        null,
+        2,
+      ),
+      true,
     );
   }
 

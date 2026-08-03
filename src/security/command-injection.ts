@@ -30,6 +30,9 @@ const CMD =
  * Payload-shaped rules. Each requires evidence of an actual command, not just a metacharacter,
  * so ordinary text and filenames do not match.
  */
+/** Max characters scanned per argument leaf — bounds worst-case regex CPU on hostile input. */
+const MAX_SCAN_LEN = 65_536;
+
 const RULES: Rule[] = [
   // $(command …) — command substitution opening with a command-like token.
   { rule: "command-injection", severity: "high", pattern: /\$\(\s*[A-Za-z_./-]/ },
@@ -37,14 +40,19 @@ const RULES: Rule[] = [
   {
     rule: "command-injection",
     severity: "high",
-    pattern: new RegExp("`[^`]*\\b(" + CMD + ")\\b[^`]*`", "i"),
+    // Single bounded quantifier before the verb — no trailing unbounded `[^`]*` (which made this
+    // O(n^2) / ReDoS-able on an unterminated backtick span full of verbs). Evidence of a command
+    // verb within ~200 chars of an opening backtick is enough to flag.
+    pattern: new RegExp("`[^`]{0,200}\\b(" + CMD + ")\\b", "i"),
   },
   // separator (; | & newline) immediately followed by a shell command verb — the verb must be
   // followed by whitespace/quote/operator/end (not `=`, which would match URL query params).
   {
     rule: "command-injection",
     severity: "high",
-    pattern: new RegExp("[;|&\\n]\\s*(" + CMD + ")(?=[\\s'\"|&;`]|$)", "i"),
+    // An optional `/path/` prefix lets a path-qualified binary (`; /bin/rm`, `; /usr/bin/wget`) match,
+    // not just a bare verb. The `/…/` run is length-bounded to stay linear.
+    pattern: new RegExp("[;|&\\n]\\s*(?:/\\S{0,100}/)?(" + CMD + ")(?=[\\s'\"|&;`]|$)", "i"),
   },
   // read of a classic credential-exfiltration target.
   { rule: "command-injection", severity: "high", pattern: /\/etc\/(passwd|shadow)\b/i },
@@ -81,9 +89,12 @@ export function checkCommandInjection(args: unknown): SecurityFinding[] {
   const seen = new Set<string>();
   for (const { rule, severity, pattern } of RULES) {
     for (const text of leaves) {
-      const match = text.match(pattern);
+      // Cap the scanned length: defense-in-depth against pathological-input CPU cost, independent of
+      // any single rule's regex shape. A real injection payload is short and near the start.
+      const scanned = text.length > MAX_SCAN_LEN ? text.slice(0, MAX_SCAN_LEN) : text;
+      const match = scanned.match(pattern);
       if (match) {
-        const ex = excerpt(text, match);
+        const ex = excerpt(scanned, match);
         const key = `${rule}:${ex}`;
         if (!seen.has(key)) {
           seen.add(key);
