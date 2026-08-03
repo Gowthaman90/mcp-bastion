@@ -1,11 +1,16 @@
 /**
- * Optional tamper-evidence via hash-chaining. Each event's hash covers its own
- * content plus the previous event's hash, so any retroactive edit or deletion
- * breaks the chain and is detectable.
+ * Optional integrity hash-chaining. Each event's hash covers its own content plus
+ * the previous event's hash, so a naive edit within the log is detectable.
+ *
+ * With an integrity `key` the chain is an **HMAC-SHA256** chain: a party who can
+ * rewrite the log but does not hold the key cannot recompute a valid chain (real
+ * forgery resistance). **Unkeyed** it is a plain SHA-256 chain that only detects
+ * accidental/naive corruption — a motivated rewriter can recompute it. In neither
+ * mode does verification by itself detect truncation of the most-recent events.
  *
  * @packageDocumentation
  */
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 import type { AuditEvent } from "./types.js";
 
@@ -32,12 +37,9 @@ function canonicalize(value: unknown): string {
  * @param prevHash Hash of the previous event (empty string for the first event).
  * @param event    The event, without its `hash` field set.
  */
-export function chainHash(prevHash: string, event: Omit<AuditEvent, "hash">): string {
-  return createHash("sha256")
-    .update(prevHash)
-    .update("\n")
-    .update(canonicalize(event))
-    .digest("hex");
+export function chainHash(prevHash: string, event: Omit<AuditEvent, "hash">, key?: string): string {
+  const h = key ? createHmac("sha256", key) : createHash("sha256");
+  return h.update(prevHash).update("\n").update(canonicalize(event)).digest("hex");
 }
 
 /**
@@ -46,11 +48,11 @@ export function chainHash(prevHash: string, event: Omit<AuditEvent, "hash">): st
  *
  * @param events Events in sequence order.
  */
-export function verifyChain(events: readonly AuditEvent[]): number {
+export function verifyChain(events: readonly AuditEvent[], key?: string): number {
   let prev = "";
   for (let i = 0; i < events.length; i++) {
     const { hash, ...rest } = events[i];
-    const expected = chainHash(prev, rest);
+    const expected = chainHash(prev, rest, key);
     if (hash !== expected) return i;
     prev = hash;
   }

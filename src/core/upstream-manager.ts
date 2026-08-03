@@ -35,6 +35,8 @@ export class UpstreamManager {
   private readonly audit?: AuditEngine;
   private readonly interceptors: readonly Interceptor[];
   private toolsChangedListener: () => void = () => {};
+  /** Per-server manual-reconnect timestamps — bounds agent-driven subprocess thrash (M5). */
+  private readonly lastReconnectAt = new Map<string, number>();
 
   /**
    * @param config The validated Bastion configuration.
@@ -187,6 +189,17 @@ export class UpstreamManager {
         message: `No server named "${server}". Known servers: ${known}.`,
       };
     }
+    // Rate-limit manual reconnects per server: a prompt-injected agent must not be able to
+    // thrash upstream subprocesses (kill/respawn) by looping bastion__reconnect.
+    const now = Date.now();
+    if (now - (this.lastReconnectAt.get(server) ?? 0) < 5_000) {
+      return {
+        ok: false,
+        server,
+        message: `Reconnect for "${server}" was requested too recently; wait a few seconds and retry.`,
+      };
+    }
+    this.lastReconnectAt.set(server, now);
     try {
       await upstream.manualReconnect();
       this.toolsChangedListener();

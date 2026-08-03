@@ -72,6 +72,9 @@ async function run(opts: { config?: string; http?: string }): Promise<void> {
       host: config.listen.host,
       port: cliPort ?? config.listen.port,
       path: config.listen.path,
+      authToken: config.listen.authToken,
+      maxSessions: config.listen.maxSessions,
+      maxBodyBytes: config.listen.maxBodyBytes,
     });
     closeListener = () => listener.close();
     logger.info(

@@ -267,6 +267,13 @@ export const AuditConfigSchema = z
       .default(["password", "token", "secret", "apikey", "api_key", "authorization", "auth"]),
     /** Hash-chain events so tampering is detectable. */
     tamperEvident: z.boolean().default(false),
+    /**
+     * Optional secret that keys the integrity hash chain (HMAC-SHA256). Provide it
+     * out-of-band (e.g. an env var) so a party who can rewrite the log file cannot
+     * forge a valid chain. Falls back to the `MCP_BASTION_AUDIT_KEY` env var.
+     * Unset → an unkeyed SHA-256 chain (detects only naive corruption).
+     */
+    integrityKey: z.string().optional(),
     /** Destinations for audit events. */
     sinks: z.array(SinkConfigSchema).default([{ type: "console" }]),
   })
@@ -284,6 +291,16 @@ export const ListenConfigSchema = z
     port: z.number().int().positive().default(3000),
     /** URL path the MCP endpoint is served at, for `http` mode. */
     path: z.string().default("/mcp"),
+    /**
+     * Bearer token required on every HTTP request (constant-time compared). Strongly
+     * recommended, and REQUIRED when `host` is not loopback — the server refuses to
+     * start on a non-loopback bind without it.
+     */
+    authToken: z.string().optional(),
+    /** Max concurrent HTTP sessions before new `initialize` requests are refused. */
+    maxSessions: z.number().int().positive().default(256),
+    /** Max request body size in bytes before a 413. */
+    maxBodyBytes: z.number().int().positive().default(1_048_576),
   })
   .default({});
 export type ListenConfig = z.infer<typeof ListenConfigSchema>;
