@@ -5,6 +5,7 @@
  *
  * @packageDocumentation
  */
+import { redactSecrets } from "../security/dlp.js";
 
 /** How argument values are recorded. */
 export type IncludeArgs = "none" | "redacted" | "full";
@@ -33,6 +34,10 @@ export function prepareArgs(
 
   const sensitive = new Set(redactKeys.map((k) => k.toLowerCase()));
   const redact = (value: unknown): unknown => {
+    // Value-level scrub: a secret can hide in a string under an unlisted key
+    // (e.g. `url: "…?api_key=sk-…"`, `pat: "ghp_…"`), so scan every string value
+    // against the shared secret patterns — not just key names.
+    if (typeof value === "string") return redactSecrets(value).text;
     if (Array.isArray(value)) return value.map(redact);
     if (value && typeof value === "object") {
       const out: Record<string, unknown> = {};

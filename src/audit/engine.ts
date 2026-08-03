@@ -13,7 +13,7 @@ import type { AuditConfig } from "../config/index.js";
 import { logger } from "../observability/index.js";
 import type { Interceptor, ToolCallContext } from "../security/index.js";
 import { chainHash } from "./chain.js";
-import { buildComplianceReport, frameworksFor, type ComplianceReport } from "./compliance.js";
+import { frameworksFor, type ComplianceReport } from "./compliance.js";
 import { prepareArgs } from "./redaction.js";
 import {
   AUDIT_SCHEMA_VERSION,
@@ -23,17 +23,29 @@ import {
   type AuditSink,
 } from "./types.js";
 
-const MAX_RECENT = 1000;
-
 export class AuditEngine {
   private seq = 0;
   private prevHash = "";
-  private readonly recent: AuditEvent[] = [];
+  /**
+   * Durable, monotonic compliance totals — updated for every event and never
+   * evicted, so a flood of benign calls cannot roll an earlier malicious event
+   * off the report (which a bounded recent-events buffer would allow).
+   */
+  private readonly totals: ComplianceReport = {
+    totalEvents: 0,
+    byDecision: {},
+    byOutcome: {},
+    controls: { nistAiRmf: {}, owaspLlm: {} },
+  };
+  /** HMAC key for the integrity chain (out-of-band). Unset → unkeyed SHA-256 chain. */
+  private readonly integrityKey: string | undefined;
 
   constructor(
     private readonly config: AuditConfig,
     private readonly sinks: readonly AuditSink[],
-  ) {}
+  ) {
+    this.integrityKey = config.integrityKey ?? process.env.MCP_BASTION_AUDIT_KEY;
+  }
 
   /** The interceptor to place first in the tool-call pipeline. */
   buildInterceptor(): Interceptor {
@@ -51,9 +63,17 @@ export class AuditEngine {
     };
   }
 
-  /** Aggregate compliance report over recent events (backs `bastion__compliance`). */
+  /** Durable, monotonic compliance report (backs `bastion__compliance`). */
   complianceReport(): ComplianceReport {
-    return buildComplianceReport(this.recent);
+    return {
+      totalEvents: this.totals.totalEvents,
+      byDecision: { ...this.totals.byDecision },
+      byOutcome: { ...this.totals.byOutcome },
+      controls: {
+        nistAiRmf: { ...this.totals.controls.nistAiRmf },
+        owaspLlm: { ...this.totals.controls.owaspLlm },
+      },
+    };
   }
 
   /** Flush all sinks. */
@@ -102,12 +122,20 @@ export class AuditEngine {
     let event: AuditEvent = core;
     if (this.config.tamperEvident) {
       const unhashed = { ...core, prevHash: this.prevHash };
-      const hash = chainHash(this.prevHash, unhashed);
+      const hash = chainHash(this.prevHash, unhashed, this.integrityKey);
       this.prevHash = hash;
       event = { ...unhashed, hash };
     }
 
-    if (this.recent.push(event) > MAX_RECENT) this.recent.shift();
+    // Fold into the durable monotonic totals (never evicted).
+    this.totals.totalEvents++;
+    this.totals.byDecision[decision] = (this.totals.byDecision[decision] ?? 0) + 1;
+    this.totals.byOutcome[outcome] = (this.totals.byOutcome[outcome] ?? 0) + 1;
+    for (const c of core.frameworks.nistAiRmf)
+      this.totals.controls.nistAiRmf[c] = (this.totals.controls.nistAiRmf[c] ?? 0) + 1;
+    for (const c of core.frameworks.owaspLlm)
+      this.totals.controls.owaspLlm[c] = (this.totals.controls.owaspLlm[c] ?? 0) + 1;
+
     this.emit(event);
   }
 

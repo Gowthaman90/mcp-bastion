@@ -7,7 +7,7 @@ import { AuditConfigSchema } from "../src/config/index.js";
 import { AuditEngine } from "../src/audit/engine.js";
 import { FileSink } from "../src/audit/sinks/file.js";
 import { prepareArgs } from "../src/audit/redaction.js";
-import { verifyChain } from "../src/audit/chain.js";
+import { chainHash, verifyChain } from "../src/audit/chain.js";
 import { frameworksFor, buildComplianceReport } from "../src/audit/compliance.js";
 import type { AuditEvent, AuditSink } from "../src/audit/types.js";
 import type { ToolCallContext } from "../src/security/index.js";
@@ -45,6 +45,40 @@ describe("redaction", () => {
       "token",
     ]);
     expect(out).toEqual({ password: "[REDACTED]", nested: { token: "[REDACTED]", keep: 1 } });
+  });
+
+  it("redacts a secret hiding in a string value under an unlisted key (M6)", () => {
+    // Fake GitHub-token-shaped value assembled at runtime (no secret literal in source).
+    const token = "ghp_" + "0123456789abcdefghij" + "ABCDEFGHIJ012345";
+    const out = prepareArgs(
+      { endpoint: `https://api.example/v1?token=${token}` },
+      "redacted",
+      ["password"], // 'endpoint' is NOT a redacted key name
+    ) as Record<string, string>;
+    expect(out.endpoint).not.toContain(token);
+    expect(out.endpoint).toContain("[REDACTED]");
+    expect(out.endpoint).toContain("https://api.example"); // structure preserved
+  });
+});
+
+describe("audit chain keying (H5)", () => {
+  const build = (key?: string): AuditEvent[] => {
+    const e1 = { seq: 1, tool: "a" } as unknown as Omit<AuditEvent, "hash">;
+    const h1 = chainHash("", e1, key);
+    const e2 = { seq: 2, tool: "b", prevHash: h1 } as unknown as Omit<AuditEvent, "hash">;
+    const h2 = chainHash(h1, e2, key);
+    return [{ ...e1, hash: h1 } as AuditEvent, { ...e2, hash: h2 } as AuditEvent];
+  };
+
+  it("an HMAC-keyed chain verifies with the key but not without it (forgery resistance)", () => {
+    const chain = build("operator-secret");
+    expect(verifyChain(chain, "operator-secret")).toBe(-1); // intact with the key
+    expect(verifyChain(chain)).not.toBe(-1); // no key → cannot reproduce the HMAC
+    expect(verifyChain(chain, "wrong-key")).not.toBe(-1); // wrong key → fails
+  });
+
+  it("an unkeyed chain still verifies (backward compatible)", () => {
+    expect(verifyChain(build())).toBe(-1);
   });
 });
 
@@ -121,6 +155,18 @@ describe("AuditEngine", () => {
     const engine = new AuditEngine(cfg(), [new MemorySink()]);
     await engine.buildInterceptor()(ctx(), async () => ok);
     expect(engine.complianceReport().totalEvents).toBe(1);
+  });
+
+  it("compliance totals are durable — an early blocked event is not buried by a flood (M4)", async () => {
+    const engine = new AuditEngine(cfg(), [new MemorySink()]);
+    await engine.buildInterceptor()(
+      Object.assign(ctx(), { securityDecision: "blocked_rug_pull" as const }),
+      async () => ({ content: [{ type: "text" as const, text: "blocked" }], isError: true }),
+    );
+    for (let i = 0; i < 1100; i++) await engine.buildInterceptor()(ctx(), async () => ok);
+    const report = engine.complianceReport();
+    expect(report.totalEvents).toBe(1101);
+    expect(report.byDecision.blocked_rug_pull).toBe(1); // survived >1000 later events
   });
 });
 

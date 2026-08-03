@@ -6,6 +6,31 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-03
+
+Continued security self-audit remediation (Batches 3–4).
+
+### Security
+
+- **Audit integrity chain can now be keyed (HMAC).** With `audit.integrityKey` (or the
+  `MCP_BASTION_AUDIT_KEY` env var), the chain is an HMAC-SHA256 chain a log-rewriter without the key
+  cannot forge; unkeyed it remains a plain SHA-256 chain (naive-corruption detection only). Docs already
+  describe it honestly as an integrity chain, not tamper-proofing. _(H5 — runtime verify-on-load with
+  cross-run chain continuity is still to come.)_
+- **Audit value-level redaction.** In `redacted` mode, every string argument value is now scrubbed against
+  the secret patterns (not just values under known key names), so a secret under an unlisted key
+  (`url: "…?token=…"`, a bare `pat`) no longer reaches the sinks. _(M6)_
+- **Durable compliance totals.** `bastion__compliance` now reports from a monotonic accumulator instead of
+  a 1000-event RAM ring, so a flood of benign calls can no longer evict an earlier malicious event. _(M4)_
+- **HTTP mode authentication.** New `listen.authToken` — a bearer token required on every request
+  (constant-time compared). The server **refuses to start on a non-loopback bind without it** (fail-closed). _(M1)_
+- **HTTP DNS-rebinding defense.** On a loopback bind, requests whose `Host` is not loopback are rejected
+  (the rebinding shape), not just those with a foreign `Origin`. _(M2)_
+- **HTTP resource limits.** Request bodies over `listen.maxBodyBytes` (default 1 MiB) get a 413; concurrent
+  sessions are capped at `listen.maxSessions` (default 256). _(M3; upstream-response size cap still to come.)_
+- **Reconnect rate-limit.** `bastion__reconnect` is now rate-limited per server (5s), so a prompt-injected
+  agent can't thrash upstream subprocesses. _(M5)_
+
 ## [0.7.0] - 2026-07-26
 
 ### Security
