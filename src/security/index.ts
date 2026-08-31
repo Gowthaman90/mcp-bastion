@@ -19,6 +19,25 @@ export type { SequencedCall } from "./taint.js";
 export { redactSecrets } from "./dlp.js";
 export { checkRequestedScopes } from "./scopes.js";
 export { checkTransportSecurity, checkRequestOrigin } from "./transport.js";
+export {
+  checkHeaderBodyCoherence,
+  decodeHeaderValue,
+  requiresHeaderValidation,
+  HEADER_VALIDATION_REVISION,
+} from "./headers.js";
+export type { HeaderBag, HeaderCheckContext } from "./headers.js";
+export {
+  checkCachePolicy,
+  clampCacheHints,
+  readCacheHints,
+  DEFAULT_MAX_TTL_MS,
+} from "./cache-policy.js";
+export type {
+  CacheScope,
+  CacheHints,
+  CachePolicyContext,
+  ClampedCacheHints,
+} from "./cache-policy.js";
 export { ToolRegistry } from "./tool-registry.js";
 export type { ObserveOptions } from "./tool-registry.js";
 export type {

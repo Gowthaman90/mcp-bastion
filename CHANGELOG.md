@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+Two pure, zero-false-positive checks for the **2026-07-28 protocol revision**, which mirrors JSON-RPC
+body fields into HTTP headers and makes list results cacheable. Both are exported from
+`src/security/` and unit-tested in isolation; neither is wired into the proxy pipeline yet, so runtime
+behavior is unchanged.
+
+- **Header/body coherence** (`checkHeaderBodyCoherence`, `src/security/headers.ts`). Compares
+  `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` against the request body — the
+  desync the spec calls out, where "a load balancer routes on the header value while the MCP server
+  executes based on the body value" and which servers must reject with `-32020` (`HeaderMismatch`).
+  Decodes the `=?base64?…?=` sentinel before comparing, as the spec requires, so a mismatch cannot hide
+  behind the encoding; resolves `Mcp-Param-*` through `x-mcp-header` annotations when a tool schema is
+  supplied; validates `Mcp-Name` against `params.taskId` on the Tasks extension's methods; and
+  implements the spec's note to intermediaries — routing headers carried under a revision that does not
+  mandate validation are flagged rather than trusted. Pre-2026-07-28 clients are never required to send
+  these headers and are never flagged for omitting them.
+- **Cache policy** (`checkCachePolicy` / `clampCacheHints`, `src/security/cache-policy.ts`). Clamps
+  `ttlMs` (the spec sets a floor of 0 but **no ceiling**, so an arbitrarily long freshness window is
+  spec-legal and a poisoned tool list can be pinned for as long as a server asks); downgrades
+  `cacheScope: "public"` to `"private"` on authenticated requests, per the spec's own warning that a
+  public result "may be shared between callers even if the Result is coming from an authenticated
+  endpoint"; refuses caching hints on `input_required` and MRTR-retry results, which must not be cached;
+  and flags a cached list served past a `list_changed` invalidation — the case that matters most here,
+  because a stale cache hides the definition change that Bastion's own hash pinning exists to catch.
+
 ## [0.8.0] - 2026-08-03
 
 Continued security self-audit remediation (Batches 3–4).
