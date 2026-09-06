@@ -57,11 +57,34 @@ export class UpstreamManager {
     for (const [name, serverConfig] of Object.entries(config.servers)) {
       this.upstreams.set(
         name,
-        new UpstreamConnection(name, serverConfig, config.reconnect, () =>
-          this.toolsChangedListener(),
+        new UpstreamConnection(
+          name,
+          serverConfig,
+          config.reconnect,
+          () => this.toolsChangedListener(),
+          { maxCacheTtlMs: config.security.maxCacheTtlMs },
         ),
       );
     }
+  }
+
+  /**
+   * Caching hints for the aggregate tool list (MCP 2026-07-28), derived from the policed hints of
+   * every connected upstream that sent any: the TTL is the *shortest* clamped TTL and the scope is
+   * `"public"` only if every contributing upstream may be cached publicly. Returns `undefined` when
+   * no upstream sent hints, so pre-revision deployments see an unchanged `tools/list`.
+   */
+  listCacheHints(): { ttlMs: number; cacheScope: "public" | "private" } | undefined {
+    let ttlMs: number | undefined;
+    let cacheScope: "public" | "private" = "public";
+    for (const upstream of this.upstreams.values()) {
+      if (!upstream.isConnected()) continue;
+      const hints = upstream.cacheHints;
+      if (!hints) continue;
+      ttlMs = ttlMs === undefined ? hints.ttlMs : Math.min(ttlMs, hints.ttlMs);
+      if (hints.cacheScope === "private") cacheScope = "private";
+    }
+    return ttlMs === undefined ? undefined : { ttlMs, cacheScope };
   }
 
   /** The configured namespace separator (used by the proxy layer for control tools). */

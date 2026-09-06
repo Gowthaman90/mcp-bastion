@@ -55,6 +55,23 @@ export {
   checkTransportSecurity,
   checkRequestOrigin,
   hashToolDefinition,
+  // MCP 2026-07-28 (stateless-era) checks
+  checkHeaderBodyCoherence,
+  decodeHeaderValue,
+  requiresHeaderValidation,
+  HEADER_VALIDATION_REVISION,
+  checkCachePolicy,
+  clampCacheHints,
+  readCacheHints,
+  DEFAULT_MAX_TTL_MS,
+} from "./security/index.js";
+export type {
+  HeaderBag,
+  HeaderCheckContext,
+  CacheScope,
+  CacheHints,
+  CachePolicyContext,
+  ClampedCacheHints,
 } from "./security/index.js";
 export type { Severity, SecurityFinding, PinStatus, ToolSecurityReport } from "./security/index.js";
 

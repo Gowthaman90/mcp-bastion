@@ -6,12 +6,36 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-05
+
+"Stateless-era hardening", part 1. When the protocol is stateless, the gateway is the only component
+that can still hold security state — so the two 2026-07-28 checks added (unwired) in the previous
+cycle are now **enforced in the proxy path**. Detection for every pre-existing vector is untouched: the
+new code runs only on requests that carry 2026-07-28 routing headers and on list results that carry
+caching hints, neither of which a pre-revision client or server ever sends.
+
 ### Added
+
+- **Header/body coherence is enforced on the HTTP listener.** Every POST is checked with
+  `checkHeaderBodyCoherence` *before* session handling; a `header-body-mismatch`, `header-invalid-value`
+  or `header-duplicate-conflict` finding is rejected with HTTP 400 and JSON-RPC error **`-32020`
+  (HeaderMismatch)**, echoing the request `id`. Medium-severity findings (unvalidated routing headers
+  under an older revision, missing/unknown `Mcp-Param-*`) are logged. New config
+  `listen.validateRoutingHeaders` (default `true`); `startHttpServer` option `validateRoutingHeaders`.
+- **Cache policy is enforced on upstream list results.** `UpstreamConnection` now reads `ttlMs` /
+  `cacheScope` off every `tools/list`, logs each `checkCachePolicy` violation, and retains a *clamped*
+  copy; `UpstreamManager.listCacheHints()` folds them (shortest TTL, `private` if any upstream is) and
+  Bastion's own `tools/list` forwards the policed hints. A poisoned list can therefore never be pinned
+  downstream longer than `security.maxCacheTtlMs` (new, default 1 h), and an authenticated upstream's
+  list is never advertised `public`. A `tools/list_changed` notification still re-lists immediately
+  (since 0.7.0), which is the spec's invalidation rule — a stale cache can no longer hide a rug pull.
+- 7 new tests (`test/spec-2026-07-28-wiring.test.ts`); suite 198/198.
+
+### Previously (0.8.x, unreleased)
 
 Two pure, zero-false-positive checks for the **2026-07-28 protocol revision**, which mirrors JSON-RPC
 body fields into HTTP headers and makes list results cacheable. Both are exported from
-`src/security/` and unit-tested in isolation; neither is wired into the proxy pipeline yet, so runtime
-behavior is unchanged.
+`src/security/` and unit-tested in isolation.
 
 - **Header/body coherence** (`checkHeaderBodyCoherence`, `src/security/headers.ts`). Compares
   `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` against the request body — the

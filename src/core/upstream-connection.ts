@@ -15,7 +15,14 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 import type { ReconnectConfig, ServerConfig } from "../config/index.js";
 import { UpstreamDisconnectedError } from "../errors.js";
-import { checkTransportSecurity } from "../security/index.js";
+import {
+  checkCachePolicy,
+  checkTransportSecurity,
+  clampCacheHints,
+  readCacheHints,
+  type CacheHints,
+  type ClampedCacheHints,
+} from "../security/index.js";
 import { buildEnv, withTimeout } from "../internal/index.js";
 import { logger } from "../observability/index.js";
 import { BASTION_NAME, BASTION_VERSION } from "./constants.js";
@@ -46,19 +53,34 @@ export class UpstreamConnection {
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   /** When `true`, a close was requested by us and must NOT trigger auto-reconnect. */
   private closedByRequest = false;
+  /** Caching hints the upstream attached to its last `tools/list` (MCP 2026-07-28), as sent. */
+  private rawCacheHints: CacheHints = {};
+  /** The same hints after policy: TTL clamped, scope narrowed. `undefined` until a list carried hints. */
+  private policedCacheHints?: ClampedCacheHints;
 
   /**
    * @param name         The configured name of this upstream.
    * @param config       Transport/launch configuration for the upstream.
    * @param reconnectCfg Reconnect policy applied on unexpected disconnects.
    * @param onChange     Invoked whenever availability or the tool set changes.
+   * @param policy       Cache-hint policy (`maxCacheTtlMs`) applied to upstream list results.
    */
   constructor(
     public readonly name: string,
     private readonly config: ServerConfig,
     private readonly reconnectCfg: ReconnectConfig,
     private readonly onChange: UpstreamChangeListener = () => {},
+    private readonly policy: { maxCacheTtlMs?: number } = {},
   ) {}
+
+  /**
+   * Policed caching hints for this upstream's tool list (MCP 2026-07-28): never a longer TTL than
+   * `maxCacheTtlMs`, never `"public"` when the upstream is authenticated. `undefined` when the upstream
+   * sent no hints, so pre-revision servers add nothing to Bastion's own list result.
+   */
+  get cacheHints(): ClampedCacheHints | undefined {
+    return this.policedCacheHints;
+  }
 
   /** Current lifecycle state. */
   get state(): ConnectionState {
@@ -156,7 +178,7 @@ export class UpstreamConnection {
     // here means the change is re-hashed and caught by the security re-sync before the next tool call.
     client.fallbackNotificationHandler = async (notification) => {
       if (notification.method === "notifications/tools/list_changed") {
-        await this.refreshTools().catch((err) =>
+        await this.refreshTools(true).catch((err) =>
           logger.warn(
             { server: this.name, err: (err as Error)?.message ?? String(err) },
             "failed to refresh tools after list_changed",
@@ -258,14 +280,56 @@ export class UpstreamConnection {
     if (requested) this.connectionState = "disconnected";
   }
 
-  /** Fetch the current tool list from the upstream, notifying listeners on change. */
-  private async refreshTools(): Promise<void> {
+  /**
+   * Fetch the current tool list from the upstream, notifying listeners on change.
+   *
+   * A `list_changed` notification invalidates any cached copy immediately (the spec's rule for
+   * notifications arriving while a response is still fresh), which is why this re-lists at once
+   * rather than waiting out a TTL — a stale cache would otherwise hide the very definition change
+   * that rug-pull pinning exists to catch.
+   *
+   * @param afterInvalidation `true` when triggered by `notifications/tools/list_changed`.
+   */
+  private async refreshTools(afterInvalidation = false): Promise<void> {
     if (!this.client) return;
     const before = this.cachedTools.map((t) => t.name).join(" ");
-    const { tools } = await this.client.listTools();
+    const result = await this.client.listTools();
+    const { tools } = result;
     this.cachedTools = tools;
+    this.policeCacheHints(result, afterInvalidation);
     const after = tools.map((t) => t.name).join(" ");
     if (before !== after) this.onChange();
+  }
+
+  /**
+   * Apply cache policy (MCP 2026-07-28) to the hints on a list result: log every violation and
+   * retain a clamped copy for Bastion's own downstream `tools/list`.
+   */
+  private policeCacheHints(result: unknown, afterInvalidation: boolean): void {
+    this.rawCacheHints = readCacheHints(result);
+    if (this.rawCacheHints.ttlMs === undefined && this.rawCacheHints.cacheScope === undefined) {
+      this.policedCacheHints = undefined;
+      return;
+    }
+    const ctx = {
+      maxTtlMs: this.policy.maxCacheTtlMs,
+      authenticated: this.isAuthenticated() === true,
+      // We have just re-listed, so no invalidation is pending; the notification is what caused this.
+      invalidationPending: false,
+    };
+    for (const f of checkCachePolicy(result, ctx)) {
+      logger.warn(
+        { server: this.name, rule: f.rule, afterInvalidation },
+        `cache policy: ${f.excerpt}`,
+      );
+    }
+    this.policedCacheHints = clampCacheHints(result, ctx);
+    if (this.policedCacheHints.changed) {
+      logger.info(
+        { server: this.name, requested: this.rawCacheHints, applied: this.policedCacheHints },
+        "cache hints clamped",
+      );
+    }
   }
 
   /** Transition to `disconnected` on an unexpected transport close and schedule recovery. */

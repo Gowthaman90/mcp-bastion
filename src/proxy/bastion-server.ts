@@ -33,9 +33,13 @@ export function buildBastionServer(manager: UpstreamManager): Server {
     { capabilities: { tools: { listChanged: true } } },
   );
 
-  // tools/list — aggregated upstream tools + Bastion's control tools.
+  // tools/list — aggregated upstream tools + Bastion's control tools. When an upstream attached
+  // caching hints (MCP 2026-07-28), Bastion forwards the *policed* hints — TTL clamped, scope
+  // narrowed — so a downstream cache can never hold a definition longer, or share it wider, than
+  // policy allows. Pre-revision upstreams send no hints and the result is unchanged.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [...manager.listUpstreamTools(), ...buildControlTools(manager.separator)],
+    ...(manager.listCacheHints() ?? {}),
   }));
 
   // tools/call — dispatch control tools locally; route everything else upstream.

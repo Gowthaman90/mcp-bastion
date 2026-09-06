@@ -214,6 +214,8 @@ only standard MCP calls:
 | `servers.<name>.headers`       | map                        | —                    | Headers for `http` upstreams (e.g. `Authorization`). |
 | `listen.mode`                  | `stdio` \| `http`          | `stdio`              | Serve Bastion over stdio or Streamable HTTP.         |
 | `listen.host` / `listen.port`  | string / number            | `127.0.0.1` / `3000` | Bind address for `http` mode.                        |
+| `listen.validateRoutingHeaders`| boolean                    | `true`               | Reject `Mcp-*` routing headers that disagree with the body (`-32020`, MCP 2026-07-28). |
+| `security.maxCacheTtlMs`       | number (ms)                | `3600000`            | Ceiling on upstream `ttlMs` cache hints forwarded downstream (MCP 2026-07-28). |
 
 ## Transports
 

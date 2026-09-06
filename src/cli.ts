@@ -75,6 +75,7 @@ async function run(opts: { config?: string; http?: string }): Promise<void> {
       authToken: config.listen.authToken,
       maxSessions: config.listen.maxSessions,
       maxBodyBytes: config.listen.maxBodyBytes,
+      validateRoutingHeaders: config.listen.validateRoutingHeaders,
     });
     closeListener = () => listener.close();
     logger.info(

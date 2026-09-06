@@ -20,7 +20,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import type { UpstreamManager } from "../core/index.js";
 import { logger } from "../observability/index.js";
-import { checkRequestOrigin } from "../security/index.js";
+import { checkHeaderBodyCoherence, checkRequestOrigin } from "../security/index.js";
 import { buildBastionServer } from "./bastion-server.js";
 
 /** Options for the HTTP listener. */
@@ -34,7 +34,22 @@ export interface HttpListenOptions {
   maxSessions?: number;
   /** Max request body size in bytes before a 413. */
   maxBodyBytes?: number;
+  /**
+   * Reject requests whose mirrored routing headers disagree with the JSON-RPC body with
+   * `-32020` HeaderMismatch (MCP 2026-07-28). Default `true`.
+   */
+  validateRoutingHeaders?: boolean;
 }
+
+/** JSON-RPC error code the 2026-07-28 revision assigns to a header/body disagreement. */
+export const HEADER_MISMATCH_CODE = -32020;
+
+/** Header findings that mean the request must be rejected (as opposed to merely logged). */
+const REJECTING_HEADER_RULES = new Set([
+  "header-body-mismatch",
+  "header-invalid-value",
+  "header-duplicate-conflict",
+]);
 
 /** Loopback hostname? (127/8, ::1, localhost) */
 function isLoopbackHostname(hostname: string): boolean {
@@ -140,6 +155,41 @@ export async function startHttpServer(
         }
         throw err;
       }
+
+      // Header/body coherence (MCP 2026-07-28). A gateway that authorizes on the mirrored
+      // `Mcp-Name` while the server executes `params.name` is the desync the spec calls out; the
+      // body is the source of truth and a disagreement MUST be rejected with -32020. Runs before
+      // any session handling so a forged routing header never reaches an upstream. Requests that
+      // carry no routing headers (every pre-revision client) produce no findings.
+      if (opts.validateRoutingHeaders !== false) {
+        const findings = checkHeaderBodyCoherence(req.headers, body);
+        const rejecting = findings.filter((f) => REJECTING_HEADER_RULES.has(f.rule));
+        if (findings.length > 0) {
+          logger.warn(
+            { rules: findings.map((f) => f.rule), rejected: rejecting.length > 0 },
+            "routing headers disagree with request body",
+          );
+        }
+        if (rejecting.length > 0) {
+          const id =
+            body && typeof body === "object" && !Array.isArray(body)
+              ? ((body as { id?: unknown }).id ?? null)
+              : null;
+          res.writeHead(400, { "content-type": "application/json" }).end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: {
+                code: HEADER_MISMATCH_CODE,
+                message: "HeaderMismatch: routing headers do not match the request body",
+                data: { findings: rejecting.map((f) => ({ rule: f.rule, excerpt: f.excerpt })) },
+              },
+              id,
+            }),
+          );
+          return;
+        }
+      }
+
       let transport = existing;
       if (!transport) {
         if (!isInitializeRequest(body)) {

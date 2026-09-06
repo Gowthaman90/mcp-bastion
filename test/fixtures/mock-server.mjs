@@ -6,7 +6,12 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 
 const server = new Server({ name: "mock", version: "0.0.0" }, { capabilities: { tools: {} } });
 
+// Optional caching hints (MCP 2026-07-28) for cache-policy tests, e.g.
+// MOCK_CACHE_HINTS='{"ttlMs":2592000000,"cacheScope":"public"}'.
+const cacheHints = process.env.MOCK_CACHE_HINTS ? JSON.parse(process.env.MOCK_CACHE_HINTS) : {};
+
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  ...cacheHints,
   tools: [
     {
       name: "echo",

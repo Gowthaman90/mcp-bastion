@@ -217,6 +217,12 @@ export const SecurityConfigSchema = z
      * `balanced`), denying the outgoing call that would carry another server's data across the boundary.
      */
     onDataFlow: OnAction.optional(),
+    /**
+     * Ceiling (ms) applied to the `ttlMs` caching hint on upstream list results (MCP 2026-07-28).
+     * The spec sets a floor of 0 but no ceiling, so a poisoned `tools/list` could otherwise be
+     * pinned in caches indefinitely. Bastion never advertises a longer TTL than this downstream.
+     */
+    maxCacheTtlMs: z.number().int().nonnegative().default(3_600_000),
   })
   .transform((cfg) => {
     const p = ENFORCEMENT_PROFILES[cfg.enforcementProfile];
@@ -301,6 +307,13 @@ export const ListenConfigSchema = z
     maxSessions: z.number().int().positive().default(256),
     /** Max request body size in bytes before a 413. */
     maxBodyBytes: z.number().int().positive().default(1_048_576),
+    /**
+     * Validate the mirrored routing headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`,
+     * `Mcp-Param-*`) against the JSON-RPC body and reject a disagreement with `-32020`
+     * (HeaderMismatch), as the 2026-07-28 revision requires. Pre-revision clients that send no
+     * routing headers are never affected.
+     */
+    validateRoutingHeaders: z.boolean().default(true),
   })
   .default({});
 export type ListenConfig = z.infer<typeof ListenConfigSchema>;
