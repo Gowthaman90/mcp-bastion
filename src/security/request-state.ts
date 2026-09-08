@@ -61,7 +61,8 @@ export const DEFAULT_REQUEST_STATE_TTL_SECONDS = 300;
 
 const b64u = (b: Buffer | string): string =>
   Buffer.from(b).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const unb64u = (s: string): Buffer => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+const unb64u = (s: string): Buffer =>
+  Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 const mac = (key: Uint8Array | string, data: string): Buffer =>
   createHmac("sha256", key).update(data).digest();
 
@@ -87,7 +88,9 @@ export function sealRequestState(upstreamState: string, opts: SealOptions): stri
 
 /** Is this string one of Bastion's envelopes (as opposed to a raw upstream state)? */
 export function isSealedRequestState(state: unknown): state is string {
-  return typeof state === "string" && state.startsWith(`${PREFIX}.`) && state.split(".").length === 3;
+  return (
+    typeof state === "string" && state.startsWith(`${PREFIX}.`) && state.split(".").length === 3
+  );
 }
 
 /**
@@ -95,7 +98,11 @@ export function isSealedRequestState(state: unknown): state is string {
  * and block uniformly. Rules: integrity (HMAC), expiry, principal binding, server/tool binding.
  */
 export function openRequestState(state: unknown, opts: OpenOptions): OpenResult {
-  const reject = (rule: string, excerpt: string, severity: "high" | "medium" = "high"): OpenResult => ({
+  const reject = (
+    rule: string,
+    excerpt: string,
+    severity: "high" | "medium" = "high",
+  ): OpenResult => ({
     ok: false,
     findings: [{ rule, severity, excerpt }],
   });
@@ -105,13 +112,19 @@ export function openRequestState(state: unknown, opts: OpenOptions): OpenResult 
   if (!isSealedRequestState(state)) {
     // A raw (non-Bastion) state on the retry means the client bypassed custody, or the state was
     // minted before Bastion sat in the path. Either way it is unverifiable here.
-    return reject("requeststate-unsealed", "requestState is not a Bastion-sealed envelope; refusing to forward unverifiable state");
+    return reject(
+      "requeststate-unsealed",
+      "requestState is not a Bastion-sealed envelope; refusing to forward unverifiable state",
+    );
   }
   const [, body, sig] = state.split(".");
   const expected = mac(opts.key, `${PREFIX}.${body}`);
   const given = unb64u(sig);
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
-    return reject("requeststate-forged", "requestState HMAC does not verify (tampered or wrong key)");
+    return reject(
+      "requeststate-forged",
+      "requestState HMAC does not verify (tampered or wrong key)",
+    );
   }
   let payload: SealedPayload;
   try {
@@ -124,10 +137,16 @@ export function openRequestState(state: unknown, opts: OpenOptions): OpenResult 
     return reject("requeststate-expired", "requestState envelope has expired (replay after TTL)");
   }
   if (payload.sub !== opts.principal) {
-    return reject("requeststate-cross-principal", `requestState was issued to a different principal (replay by "${opts.principal}")`);
+    return reject(
+      "requeststate-cross-principal",
+      `requestState was issued to a different principal (replay by "${opts.principal}")`,
+    );
   }
   if (payload.srv !== opts.server || payload.tool !== opts.tool) {
-    return reject("requeststate-cross-request", `requestState was issued for ${payload.srv}/${payload.tool}, presented to ${opts.server}/${opts.tool}`);
+    return reject(
+      "requeststate-cross-request",
+      `requestState was issued for ${payload.srv}/${payload.tool}, presented to ${opts.server}/${opts.tool}`,
+    );
   }
   return { ok: true, upstreamState: payload.up, payload };
 }

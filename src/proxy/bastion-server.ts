@@ -48,7 +48,10 @@ const liveServers = new Set<Server>();
  * @param manager The upstream manager providing tools, routing, and health.
  * @param opts    Principal and lifetime of this instance.
  */
-export function buildBastionServer(manager: UpstreamManager, opts: BastionServerOptions = {}): Server {
+export function buildBastionServer(
+  manager: UpstreamManager,
+  opts: BastionServerOptions = {},
+): Server {
   const principal = opts.principal ?? "stdio";
   // Policed cache hints (MCP 2026-07-28): never a longer TTL, never a wider scope, than policy allows.
   const hints = manager.listCacheHints();
@@ -76,8 +79,12 @@ export function buildBastionServer(manager: UpstreamManager, opts: BastionServer
     if (isControlToolName(name, manager.separator)) {
       return handleControlTool(name, (args ?? {}) as Record<string, unknown>, manager);
     }
-    const mcpReq = ctx.mcpReq as { inputResponses?: Record<string, unknown>; requestState?: () => unknown };
-    const requestState = typeof mcpReq.requestState === "function" ? mcpReq.requestState() : undefined;
+    const mcpReq = ctx.mcpReq as {
+      inputResponses?: Record<string, unknown>;
+      requestState?: () => unknown;
+    };
+    const requestState =
+      typeof mcpReq.requestState === "function" ? mcpReq.requestState() : undefined;
     const outcome = await manager.callUpstreamTool(name, args ?? {}, {
       principal,
       inputResponses: mcpReq.inputResponses,

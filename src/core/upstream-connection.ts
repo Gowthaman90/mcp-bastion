@@ -9,7 +9,11 @@
  * @packageDocumentation
  */
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import type { CacheableRequestOptions, McpSubscription, ProtocolEra } from "@modelcontextprotocol/client";
+import type {
+  CacheableRequestOptions,
+  McpSubscription,
+  ProtocolEra,
+} from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import type { Tool } from "@modelcontextprotocol/server";
 
@@ -40,7 +44,9 @@ export interface CallToolExtra {
 }
 
 /** Map the configured `protocol` to the SDK's negotiation mode. */
-function negotiationMode(protocol: "auto" | "legacy" | "2026-07-28"): "auto" | "legacy" | { pin: string } {
+function negotiationMode(
+  protocol: "auto" | "legacy" | "2026-07-28",
+): "auto" | "legacy" | { pin: string } {
   if (protocol === "2026-07-28") return { pin: "2026-07-28" };
   return protocol;
 }
@@ -227,7 +233,10 @@ export class UpstreamConnection {
         try {
           this.subscription = await client.listen({ toolsListChanged: true });
         } catch (err) {
-          logger.debug({ server: this.name, err: (err as Error)?.message ?? String(err) }, "no change stream");
+          logger.debug(
+            { server: this.name, err: (err as Error)?.message ?? String(err) },
+            "no change stream",
+          );
         }
       }
       logger.info(
@@ -345,7 +354,9 @@ export class UpstreamConnection {
     const before = this.cachedTools.map((t) => t.name).join(" ");
     // Bypass the SDK client's own list cache: Bastion polices cache hints itself and must see the
     // upstream's current definitions (a stale cache would hide exactly the rug pull pinning catches).
-    const result = await this.client.listTools(undefined, { cacheMode: "bypass" } as CacheableRequestOptions);
+    const result = await this.client.listTools(undefined, {
+      cacheMode: "bypass",
+    } as CacheableRequestOptions);
     // The client and server packages each bundle their own (structurally equal) `Tool` type.
     this.cachedTools = result.tools as unknown as Tool[];
     this.policeCacheHints(result, afterInvalidation);

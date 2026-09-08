@@ -30,7 +30,12 @@ import {
   sealRequestState,
   SecurityEngine,
 } from "../security/index.js";
-import type { Interceptor, ToolCallContext, ToolCallOutcome, ToolSecurityReport } from "../security/index.js";
+import type {
+  Interceptor,
+  ToolCallContext,
+  ToolCallOutcome,
+  ToolSecurityReport,
+} from "../security/index.js";
 import { ControlAction, controlToolName } from "./constants.js";
 import type { ReconnectResult, ServerStatus, ToolRoute } from "./types.js";
 import { UpstreamConnection } from "./upstream-connection.js";
@@ -53,8 +58,11 @@ export class UpstreamManager {
    */
   constructor(config: BastionConfig) {
     this.namespaceSeparator = config.namespace.separator;
-    const configuredKey = config.security.requestStateKey ?? process.env.MCP_BASTION_REQUEST_STATE_KEY;
-    this.requestStateKey = configuredKey ? Buffer.from(configuredKey, "utf8") : generateRequestStateKey();
+    const configuredKey =
+      config.security.requestStateKey ?? process.env.MCP_BASTION_REQUEST_STATE_KEY;
+    this.requestStateKey = configuredKey
+      ? Buffer.from(configuredKey, "utf8")
+      : generateRequestStateKey();
     this.requestStateTtlSeconds = config.security.requestStateTtlSeconds;
     this.security = new SecurityEngine(config.security, this.namespaceSeparator);
 
@@ -147,7 +155,11 @@ export class UpstreamManager {
   async callUpstreamTool(
     name: string,
     args: unknown,
-    opts: { principal?: string; inputResponses?: Record<string, unknown>; requestState?: string } = {},
+    opts: {
+      principal?: string;
+      inputResponses?: Record<string, unknown>;
+      requestState?: string;
+    } = {},
   ): Promise<ToolCallOutcome> {
     const callArgs = (args ?? {}) as Record<string, unknown>;
     const principal = opts.principal ?? "stdio";
@@ -189,7 +201,10 @@ export class UpstreamManager {
       });
       if (!opened.ok) {
         const rules = opened.findings.map((f) => f.rule).join(", ");
-        logger.warn({ tool: name, principal, rules }, "rejected MRTR retry: requestState custody check failed");
+        logger.warn(
+          { tool: name, principal, rules },
+          "rejected MRTR retry: requestState custody check failed",
+        );
         return textResult(
           `Blocked by mcp-bastion: the requestState presented for "${name}" failed verification (${rules}). ` +
             `A continuation must be echoed unchanged, by the same principal, before it expires.`,
@@ -223,13 +238,16 @@ export class UpstreamManager {
       // state never leaves Bastion, and the retry can only succeed with this envelope, from this
       // principal, for this server/tool, before it expires.
       if (isInputRequired(outcome)) {
-        const sealed = sealRequestState(typeof outcome.requestState === "string" ? outcome.requestState : "", {
-          key: this.requestStateKey,
-          ttlSeconds: this.requestStateTtlSeconds,
-          principal,
-          server: route.server,
-          tool: route.originalName,
-        });
+        const sealed = sealRequestState(
+          typeof outcome.requestState === "string" ? outcome.requestState : "",
+          {
+            key: this.requestStateKey,
+            ttlSeconds: this.requestStateTtlSeconds,
+            principal,
+            server: route.server,
+            tool: route.originalName,
+          },
+        );
         return { ...(outcome as InputRequiredResult), requestState: sealed };
       }
       return outcome;

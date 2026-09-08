@@ -95,7 +95,8 @@ export class AuditEngine {
     threw: boolean,
   ): void {
     // An MRTR continuation is neither ok nor error: it has no content yet. Record it as ok.
-    const result = callOutcome && "content" in callOutcome ? (callOutcome as CallToolResult) : undefined;
+    const result =
+      callOutcome && "content" in callOutcome ? (callOutcome as CallToolResult) : undefined;
     const decision: AuditDecision = ctx.securityDecision ?? "allowed";
     const outcome: AuditOutcome = threw
       ? "error"

@@ -26,7 +26,7 @@ const ctx = (over: Partial<ToolCallContext> = {}): ToolCallContext => ({
   server: "s",
   toolName: "t",
   principal: "test",
-    namespacedName: "s__t",
+  namespacedName: "s__t",
   args: {},
   ...over,
 });

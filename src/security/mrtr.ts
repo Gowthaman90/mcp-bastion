@@ -21,16 +21,24 @@
 import { scanText } from "./poisoning.js";
 import type { SecurityFinding } from "./types.js";
 
-const CREDENTIAL_FIELD = /(^|[_\s-])(password|passwd|passcode|pin|api[_-]?key|apikey|secret|token|access[_-]?token|refresh[_-]?token|bearer|private[_-]?key|credential|client[_-]?secret|otp|2fa|mfa)([_\s-]|$)/i;
-const CREDENTIAL_ASK = /\b(re-?enter|enter|provide|paste|confirm|type|supply)\b[^.]{0,80}\b(password|passcode|api key|api[_-]key|access token|refresh token|secret key|private key|credentials?|one-time code|verification code)\b/i;
+const CREDENTIAL_FIELD =
+  /(^|[_\s-])(password|passwd|passcode|pin|api[_-]?key|apikey|secret|token|access[_-]?token|refresh[_-]?token|bearer|private[_-]?key|credential|client[_-]?secret|otp|2fa|mfa)([_\s-]|$)/i;
+const CREDENTIAL_ASK =
+  /\b(re-?enter|enter|provide|paste|confirm|type|supply)\b[^.]{0,80}\b(password|passcode|api key|api[_-]key|access token|refresh token|secret key|private key|credentials?|one-time code|verification code)\b/i;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** Is this an `input_required` result (MRTR) rather than a complete tool result? */
-export function isInputRequired(result: unknown): result is { resultType: "input_required"; inputRequests: Record<string, unknown>; requestState?: string } {
-  return isRecord(result) && result.resultType === "input_required" && isRecord(result.inputRequests);
+export function isInputRequired(result: unknown): result is {
+  resultType: "input_required";
+  inputRequests: Record<string, unknown>;
+  requestState?: string;
+} {
+  return (
+    isRecord(result) && result.resultType === "input_required" && isRecord(result.inputRequests)
+  );
 }
 
 /** Field names an elicitation form asks for. */
@@ -77,7 +85,11 @@ export function checkInputRequests(result: unknown): SecurityFinding[] {
         });
       }
       for (const f of scanText(message)) {
-        findings.push({ rule: `mrtr-elicitation-${f.rule}`, severity: f.severity, excerpt: `[${key}] ${f.excerpt}` });
+        findings.push({
+          rule: `mrtr-elicitation-${f.rule}`,
+          severity: f.severity,
+          excerpt: `[${key}] ${f.excerpt}`,
+        });
       }
     }
 
@@ -96,10 +108,18 @@ export function checkInputRequests(result: unknown): SecurityFinding[] {
       }
       const messages = Array.isArray(params.messages) ? params.messages : [];
       const text = messages
-        .map((m) => (isRecord(m) && isRecord(m.content) && typeof m.content.text === "string" ? m.content.text : ""))
+        .map((m) =>
+          isRecord(m) && isRecord(m.content) && typeof m.content.text === "string"
+            ? m.content.text
+            : "",
+        )
         .join("\n");
       for (const f of scanText(text)) {
-        findings.push({ rule: `mrtr-sampling-${f.rule}`, severity: f.severity, excerpt: `[${key}] ${f.excerpt}` });
+        findings.push({
+          rule: `mrtr-sampling-${f.rule}`,
+          severity: f.severity,
+          excerpt: `[${key}] ${f.excerpt}`,
+        });
       }
     }
   }
@@ -110,11 +130,17 @@ export function checkInputRequests(result: unknown): SecurityFinding[] {
  * Return a copy of the result with the flagged embedded requests removed (`strip` posture). If
  * nothing is left, the caller should treat the call as blocked rather than forward an empty round.
  */
-export function stripFlaggedInputRequests(result: unknown, findings: SecurityFinding[]): { result: unknown; removed: string[] } {
+export function stripFlaggedInputRequests(
+  result: unknown,
+  findings: SecurityFinding[],
+): { result: unknown; removed: string[] } {
   if (!isInputRequired(result)) return { result, removed: [] };
   // Only high-severity findings remove a request; medium ones (e.g. a URL elicitation) are advisory.
   const flagged = new Set(
-    findings.filter((f) => f.severity === "high").map((f) => /^\[([^\]]+)\]/.exec(f.excerpt)?.[1]).filter((k): k is string => !!k),
+    findings
+      .filter((f) => f.severity === "high")
+      .map((f) => /^\[([^\]]+)\]/.exec(f.excerpt)?.[1])
+      .filter((k): k is string => !!k),
   );
   const kept: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(result.inputRequests)) if (!flagged.has(k)) kept[k] = v;

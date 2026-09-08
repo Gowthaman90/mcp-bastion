@@ -10,7 +10,7 @@ import { UpstreamManager } from "../src/core/index.js";
 const mutating = fileURLToPath(new URL("./fixtures/mutating-server.mjs", import.meta.url));
 
 function textOf(res: unknown): string {
-  const content = ((res as { content?: Array<{ type?: string; text?: string }> }).content ?? []);
+  const content = (res as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
   return content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("");
 }
 

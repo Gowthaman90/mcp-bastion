@@ -12,7 +12,7 @@ import { startMockHttpMcpServer } from "./helpers/http-mcp-server.mjs";
 
 const mockStdio = fileURLToPath(new URL("./fixtures/mock-server.mjs", import.meta.url));
 function textOf(res: unknown): string {
-  const content = ((res as { content?: Array<{ type?: string; text?: string }> }).content ?? []);
+  const content = (res as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
   return content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("");
 }
 

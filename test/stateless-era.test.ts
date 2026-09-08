@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
-import { Client, StreamableHTTPClientTransport, isInputRequiredResult } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+  isInputRequiredResult,
+} from "@modelcontextprotocol/client";
 import { Client as LegacyClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport as LegacyHttp } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
@@ -14,18 +18,29 @@ const legacyStdio = fileURLToPath(new URL("./fixtures/mock-server.mjs", import.m
 
 function cfg(security: Record<string, unknown> = {}): BastionConfig {
   return BastionConfigSchema.parse({
-    servers: { up: { command: process.execPath, args: [modernStdio] }, old: { command: process.execPath, args: [legacyStdio] } },
+    servers: {
+      up: { command: process.execPath, args: [modernStdio] },
+      old: { command: process.execPath, args: [legacyStdio] },
+    },
     reconnect: { auto: false },
     healthCheck: { enabled: false },
     security,
   });
 }
-const textOf = (r: unknown) => (((r as { content?: Array<{ type?: string; text?: string }> }).content ?? []).map((c) => (c.type === "text" ? c.text ?? "" : "")).join(""));
+const textOf = (r: unknown) =>
+  ((r as { content?: Array<{ type?: string; text?: string }> }).content ?? [])
+    .map((c) => (c.type === "text" ? (c.text ?? "") : ""))
+    .join("");
 
 async function modernClient(url: string, extra: Record<string, unknown> = {}) {
   const c = new Client(
     { name: "t", version: "0" },
-    { versionNegotiation: { mode: "auto" }, inputRequired: { autoFulfill: false }, capabilities: { elicitation: { form: {} }, sampling: {} }, ...extra },
+    {
+      versionNegotiation: { mode: "auto" },
+      inputRequired: { autoFulfill: false },
+      capabilities: { elicitation: { form: {} }, sampling: {} },
+      ...extra,
+    },
   );
   await c.connect(new StreamableHTTPClientTransport(new URL(url)));
   return c;
@@ -60,7 +75,12 @@ describe("v1.0 MRTR relay with requestState custody", () => {
       expect(isSealedRequestState(ir.requestState)).toBe(true); // never the upstream's raw state
       expect(ir.requestState).not.toContain("upstream-state-42");
       const done = await c.callTool(
-        { name: "up__confirm_transfer", arguments: {}, inputResponses: { confirm: { action: "accept", content: { ok: true } } }, requestState: ir.requestState } as never,
+        {
+          name: "up__confirm_transfer",
+          arguments: {},
+          inputResponses: { confirm: { action: "accept", content: { ok: true } } },
+          requestState: ir.requestState,
+        } as never,
         allow,
       );
       expect(textOf(done)).toContain("transfer done");
@@ -78,12 +98,30 @@ describe("v1.0 MRTR relay with requestState custody", () => {
     const listener = await startHttpServer(mgr, { host: "127.0.0.1", port: 0, path: "/mcp" });
     const c = await modernClient(listener.url);
     try {
-      const round = (await c.callTool({ name: "up__confirm_transfer", arguments: {} }, allow)) as { requestState: string };
+      const round = (await c.callTool({ name: "up__confirm_transfer", arguments: {} }, allow)) as {
+        requestState: string;
+      };
       const tampered = round.requestState.slice(0, -3) + "AAA";
-      const r1 = await c.callTool({ name: "up__confirm_transfer", arguments: {}, inputResponses: { confirm: { action: "accept", content: { ok: true } } }, requestState: tampered } as never, allow);
+      const r1 = await c.callTool(
+        {
+          name: "up__confirm_transfer",
+          arguments: {},
+          inputResponses: { confirm: { action: "accept", content: { ok: true } } },
+          requestState: tampered,
+        } as never,
+        allow,
+      );
       expect((r1 as { isError?: boolean }).isError).toBe(true);
       expect(textOf(r1)).toMatch(/requeststate-forged/);
-      const r2 = await c.callTool({ name: "up__confirm_transfer", arguments: {}, inputResponses: { confirm: { action: "accept", content: { ok: true } } }, requestState: "upstream-state-42" } as never, allow);
+      const r2 = await c.callTool(
+        {
+          name: "up__confirm_transfer",
+          arguments: {},
+          inputResponses: { confirm: { action: "accept", content: { ok: true } } },
+          requestState: "upstream-state-42",
+        } as never,
+        allow,
+      );
       expect((r2 as { isError?: boolean }).isError).toBe(true);
       expect(textOf(r2)).toMatch(/requeststate-unsealed/);
     } finally {
@@ -135,14 +173,34 @@ describe("v1.0 transport downgrade prevention", () => {
     await mgr.connectAll();
     const listener = await startHttpServer(mgr, { host: "127.0.0.1", port: 0, path: "/mcp" });
     try {
-      const get = await fetch(listener.url, { method: "GET", headers: { accept: "text/event-stream" } });
+      const get = await fetch(listener.url, {
+        method: "GET",
+        headers: { accept: "text/event-stream" },
+      });
       expect(get.status).toBe(405);
-      const del = await fetch(listener.url, { method: "DELETE", headers: { "mcp-session-id": "sess-abc" } });
+      const del = await fetch(listener.url, {
+        method: "DELETE",
+        headers: { "mcp-session-id": "sess-abc" },
+      });
       expect(del.status).toBe(405);
       const post = await fetch(listener.url, {
         method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-session-id": "sess-abc", "last-event-id": "42" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "x", version: "0" } } }),
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-session-id": "sess-abc",
+          "last-event-id": "42",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "x", version: "0" },
+          },
+        }),
       });
       expect(post.status).toBe(200);
       expect(post.headers.get("mcp-session-id")).toBeNull();
@@ -155,10 +213,17 @@ describe("v1.0 transport downgrade prevention", () => {
   it("refuses pre-2026-07-28 clients entirely when listen.legacy is 'reject' (-32022)", async () => {
     const mgr = new UpstreamManager(cfg());
     await mgr.connectAll();
-    const listener = await startHttpServer(mgr, { host: "127.0.0.1", port: 0, path: "/mcp", legacy: "reject" });
+    const listener = await startHttpServer(mgr, {
+      host: "127.0.0.1",
+      port: 0,
+      path: "/mcp",
+      legacy: "reject",
+    });
     try {
       const old = new LegacyClient({ name: "old", version: "0" }, { capabilities: {} });
-      await expect(old.connect(new LegacyHttp(new URL(listener.url)))).rejects.toThrow(/-32022|Unsupported protocol version/);
+      await expect(old.connect(new LegacyHttp(new URL(listener.url)))).rejects.toThrow(
+        /-32022|Unsupported protocol version/,
+      );
       const modern = await modernClient(listener.url);
       expect(modern.getProtocolEra()).toBe("modern");
       await modern.close();

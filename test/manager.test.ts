@@ -16,7 +16,7 @@ function cfg(servers: Record<string, unknown>): BastionConfig {
 }
 
 function textOf(res: unknown): string {
-  const content = ((res as { content?: Array<{ type?: string; text?: string }> }).content ?? []);
+  const content = (res as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
   return content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("");
 }
 

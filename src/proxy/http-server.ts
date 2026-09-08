@@ -110,7 +110,8 @@ export async function startHttpServer(
   // One front-door Server per request (stateless core); the principal is derived from the bearer
   // token the SDK receives as `authInfo`, so sealed continuations cannot cross principals.
   const handler: McpHttpHandler = createMcpHandler(
-    (ctx) => buildBastionServer(manager, { principal: principalOf(ctx.authInfo), persistent: false }),
+    (ctx) =>
+      buildBastionServer(manager, { principal: principalOf(ctx.authInfo), persistent: false }),
     {
       legacy: opts.legacy ?? "stateless",
       onerror: (err) => logger.warn({ err: err.message }, "mcp handler error"),
@@ -173,7 +174,11 @@ export async function startHttpServer(
           return;
         }
         res.writeHead(400, { "content-type": "application/json" }).end(
-          JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null }),
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32700, message: "Parse error" },
+            id: null,
+          }),
         );
         return;
       }

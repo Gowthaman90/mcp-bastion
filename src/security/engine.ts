@@ -38,7 +38,10 @@ function safeStringify(args: unknown): string {
 
 /** Concatenate the text blocks of a tool result for heuristic scanning (empty for an MRTR round). */
 function resultText(result: ToolCallOutcome): string {
-  const content = (("content" in result ? result.content : undefined) ?? []) as Array<{ type?: string; text?: string }>;
+  const content = (("content" in result ? result.content : undefined) ?? []) as Array<{
+    type?: string;
+    text?: string;
+  }>;
   return content
     .filter((c) => c.type === "text" && typeof c.text === "string")
     .map((c) => c.text)
@@ -474,7 +477,10 @@ export class SecurityEngine {
       }
       const { result: stripped, removed } = stripFlaggedInputRequests(result, findings);
       if (removed.length > 0) {
-        this.log.warn({ server: ctx.server, tool: ctx.toolName, removed }, "stripped flagged input requests");
+        this.log.warn(
+          { server: ctx.server, tool: ctx.toolName, removed },
+          "stripped flagged input requests",
+        );
       }
       if (isInputRequired(stripped) && Object.keys(stripped.inputRequests).length === 0) {
         ctx.securityDecision = "blocked_input_required";

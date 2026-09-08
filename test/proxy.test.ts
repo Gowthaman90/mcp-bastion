@@ -11,7 +11,7 @@ import { buildBastionServer, startHttpServer } from "../src/proxy/index.js";
 const mockServer = fileURLToPath(new URL("./fixtures/mock-server.mjs", import.meta.url));
 
 function textOf(res: unknown): string {
-  const content = ((res as { content?: Array<{ type?: string; text?: string }> }).content ?? []);
+  const content = (res as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
   return content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("");
 }
 

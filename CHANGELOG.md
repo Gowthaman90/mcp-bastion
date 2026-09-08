@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-08
+
+- **Node >= 20 required** (the SDK 2.0 packages declare `engines.node >= 20`); `engines` and the CI matrix
+  (20 / 22 / 24) updated. Formatting of the 1.0.0 sources normalised (the CI `format:check` step failed on
+  1.0.0). No functional change.
+
 ## [1.0.0] - 2026-09-08
 
 **The stateless-era release.** mcp-bastion now runs on the MCP TypeScript SDK **2.0** line
@@ -77,13 +83,13 @@ caching hints, neither of which a pre-revision client or server ever sends.
 ### Added
 
 - **Header/body coherence is enforced on the HTTP listener.** Every POST is checked with
-  `checkHeaderBodyCoherence` *before* session handling; a `header-body-mismatch`, `header-invalid-value`
+  `checkHeaderBodyCoherence` _before_ session handling; a `header-body-mismatch`, `header-invalid-value`
   or `header-duplicate-conflict` finding is rejected with HTTP 400 and JSON-RPC error **`-32020`
   (HeaderMismatch)**, echoing the request `id`. Medium-severity findings (unvalidated routing headers
   under an older revision, missing/unknown `Mcp-Param-*`) are logged. New config
   `listen.validateRoutingHeaders` (default `true`); `startHttpServer` option `validateRoutingHeaders`.
 - **Cache policy is enforced on upstream list results.** `UpstreamConnection` now reads `ttlMs` /
-  `cacheScope` off every `tools/list`, logs each `checkCachePolicy` violation, and retains a *clamped*
+  `cacheScope` off every `tools/list`, logs each `checkCachePolicy` violation, and retains a _clamped_
   copy; `UpstreamManager.listCacheHints()` folds them (shortest TTL, `private` if any upstream is) and
   Bastion's own `tools/list` forwards the policed hints. A poisoned list can therefore never be pinned
   downstream longer than `security.maxCacheTtlMs` (new, default 1 h), and an authenticated upstream's

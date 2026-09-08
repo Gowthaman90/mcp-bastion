@@ -7,7 +7,7 @@ import { UpstreamManager } from "../src/core/index.js";
 const crashable = fileURLToPath(new URL("./fixtures/crashable-server.mjs", import.meta.url));
 
 function textOf(res: unknown): string {
-  const content = ((res as { content?: Array<{ type?: string; text?: string }> }).content ?? []);
+  const content = (res as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
   return content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("");
 }
 

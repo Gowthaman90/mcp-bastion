@@ -17,7 +17,12 @@ describe("requestState custody (MCP 2026-07-28 MRTR)", () => {
   it("rejects a tampered envelope (integrity)", () => {
     const sealed = sealRequestState("x", { key, ...bind });
     const [p, body, sig] = sealed.split(".");
-    const forgedBody = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(body.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString()), sub: "bob" })).toString("base64url");
+    const forgedBody = Buffer.from(
+      JSON.stringify({
+        ...JSON.parse(Buffer.from(body.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString()),
+        sub: "bob",
+      }),
+    ).toString("base64url");
     const r = openRequestState(`${p}.${forgedBody}.${sig}`, { key, ...bind, principal: "bob" });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.findings[0].rule).toBe("requeststate-forged");
