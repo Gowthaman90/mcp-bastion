@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-08
+
+- Fix two unchecked type assertions in the new end-to-end test file that failed `tsc --noEmit` (and
+  therefore CI) on 1.0.1. No functional change.
+
 ## [1.0.1] - 2026-09-08
 
 - **Node >= 20 required** (the SDK 2.0 packages declare `engines.node >= 20`); `engines` and the CI matrix

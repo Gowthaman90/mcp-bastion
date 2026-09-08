@@ -71,7 +71,10 @@ describe("v1.0 MRTR relay with requestState custody", () => {
     try {
       const round = await c.callTool({ name: "up__confirm_transfer", arguments: {} }, allow);
       expect(isInputRequiredResult(round)).toBe(true);
-      const ir = round as { requestState?: string; inputRequests: Record<string, unknown> };
+      const ir = round as unknown as {
+        requestState?: string;
+        inputRequests: Record<string, unknown>;
+      };
       expect(isSealedRequestState(ir.requestState)).toBe(true); // never the upstream's raw state
       expect(ir.requestState).not.toContain("upstream-state-42");
       const done = await c.callTool(
@@ -98,9 +101,10 @@ describe("v1.0 MRTR relay with requestState custody", () => {
     const listener = await startHttpServer(mgr, { host: "127.0.0.1", port: 0, path: "/mcp" });
     const c = await modernClient(listener.url);
     try {
-      const round = (await c.callTool({ name: "up__confirm_transfer", arguments: {} }, allow)) as {
-        requestState: string;
-      };
+      const round = (await c.callTool(
+        { name: "up__confirm_transfer", arguments: {} },
+        allow,
+      )) as unknown as { requestState: string };
       const tampered = round.requestState.slice(0, -3) + "AAA";
       const r1 = await c.callTool(
         {
