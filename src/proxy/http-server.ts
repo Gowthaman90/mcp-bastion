@@ -1,27 +1,25 @@
 /**
- * Client-facing Streamable HTTP server.
+ * Client-facing Streamable HTTP listener (MCP 2026-07-28 stateless core, with legacy support).
  *
- * Lets one or more MCP clients connect to Bastion over HTTP instead of stdio.
- * Each client session gets its own MCP {@link Server} instance (all sharing the
- * one {@link UpstreamManager}), tracked by the `Mcp-Session-Id` header per the
- * Streamable HTTP spec.
+ * Built on SDK 2.0's `createMcpHandler`: a fresh front-door {@link Server} serves every request and
+ * nothing is held between requests. Pre-2026-07-28 clients are served statelessly by default
+ * (`legacy: "stateless"` — no `Mcp-Session-Id` is minted or honoured, GET/DELETE answer 405,
+ * `Last-Event-ID` is ignored) or refused outright (`legacy: "reject"`, downgrade prevention).
+ *
+ * Bastion's own gates run *before* the SDK sees the request: host/origin (DNS-rebinding), bearer
+ * auth, body-size cap, and header/body coherence (`-32020`).
  *
  * @packageDocumentation
  */
-import {
-  createServer,
-  type IncomingMessage,
-  type Server as HttpServer,
-  type ServerResponse,
-} from "node:http";
-import { randomUUID, timingSafeEqual } from "node:crypto";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { createMcpHandler } from "@modelcontextprotocol/server";
+import type { AuthInfo, McpHttpHandler } from "@modelcontextprotocol/server";
 
 import type { UpstreamManager } from "../core/index.js";
 import { logger } from "../observability/index.js";
 import { checkHeaderBodyCoherence, checkRequestOrigin } from "../security/index.js";
-import { buildBastionServer } from "./bastion-server.js";
+import { addToolsChangedTarget, buildBastionServer } from "./bastion-server.js";
 
 /** Options for the HTTP listener. */
 export interface HttpListenOptions {
@@ -30,7 +28,7 @@ export interface HttpListenOptions {
   path: string;
   /** Bearer token required on every request (constant-time compared). */
   authToken?: string;
-  /** Max concurrent sessions before new `initialize` requests are refused. */
+  /** Accepted for compatibility; sessions no longer exist in the stateless core. */
   maxSessions?: number;
   /** Max request body size in bytes before a 413. */
   maxBodyBytes?: number;
@@ -39,6 +37,8 @@ export interface HttpListenOptions {
    * `-32020` HeaderMismatch (MCP 2026-07-28). Default `true`.
    */
   validateRoutingHeaders?: boolean;
+  /** Serve pre-2026-07-28 clients statelessly (default) or refuse them (`-32022`). */
+  legacy?: "stateless" | "reject";
 }
 
 /** JSON-RPC error code the 2026-07-28 revision assigns to a header/body disagreement. */
@@ -73,6 +73,15 @@ function isAuthorized(header: string | undefined, token: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * The principal a request acts as: a stable, non-reversible hash of the bearer token, or
+ * `http-anonymous` on an unauthenticated loopback listener. Sealed `requestState` is bound to it.
+ */
+export function principalOf(authInfo: AuthInfo | undefined): string {
+  if (!authInfo?.token) return "http-anonymous";
+  return "bearer:" + createHash("sha256").update(authInfo.token).digest("hex").slice(0, 16);
+}
+
 /** A running HTTP listener with a graceful shutdown. */
 export interface HttpListener {
   readonly url: string;
@@ -82,8 +91,8 @@ export interface HttpListener {
 /**
  * Start the Streamable HTTP server. Resolves once it is listening.
  *
- * @param manager The shared upstream manager backing every session.
- * @param opts    Bind host/port/path.
+ * @param manager The shared upstream manager backing every request.
+ * @param opts    Bind host/port/path and gates.
  */
 export async function startHttpServer(
   manager: UpstreamManager,
@@ -96,10 +105,18 @@ export async function startHttpServer(
         `an unauthenticated public bind would expose every proxied tool. Set listen.authToken or bind 127.0.0.1.`,
     );
   }
-  const maxSessions = opts.maxSessions ?? 256;
   const maxBodyBytes = opts.maxBodyBytes ?? 1_048_576;
 
-  const transports = new Map<string, StreamableHTTPServerTransport>();
+  // One front-door Server per request (stateless core); the principal is derived from the bearer
+  // token the SDK receives as `authInfo`, so sealed continuations cannot cross principals.
+  const handler: McpHttpHandler = createMcpHandler(
+    (ctx) => buildBastionServer(manager, { principal: principalOf(ctx.authInfo), persistent: false }),
+    {
+      legacy: opts.legacy ?? "stateless",
+      onerror: (err) => logger.warn({ err: err.message }, "mcp handler error"),
+    },
+  );
+  const removeTarget = addToolsChangedTarget(() => handler.notify.toolsChanged());
 
   const httpServer = createServer((req, res) => {
     handle(req, res).catch((err) => {
@@ -134,6 +151,9 @@ export async function startHttpServer(
       res.writeHead(401, { "www-authenticate": "Bearer" }).end("Unauthorized");
       return;
     }
+    const authInfo: AuthInfo | undefined = opts.authToken
+      ? { token: opts.authToken, clientId: "mcp-bastion-bearer", scopes: [] }
+      : undefined;
 
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     if (url.pathname !== opts.path) {
@@ -141,26 +161,28 @@ export async function startHttpServer(
       return;
     }
 
-    const sessionId = req.headers["mcp-session-id"];
-    const existing = typeof sessionId === "string" ? transports.get(sessionId) : undefined;
-
+    let raw = "";
+    let body: unknown;
     if (req.method === "POST") {
-      let body: unknown;
       try {
-        body = await readJson(req, maxBodyBytes);
+        raw = await readBody(req, maxBodyBytes);
+        body = raw ? JSON.parse(raw) : undefined;
       } catch (err) {
         if ((err as { statusCode?: number }).statusCode === 413) {
           res.writeHead(413).end("Payload too large");
           return;
         }
-        throw err;
+        res.writeHead(400, { "content-type": "application/json" }).end(
+          JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null }),
+        );
+        return;
       }
 
       // Header/body coherence (MCP 2026-07-28). A gateway that authorizes on the mirrored
       // `Mcp-Name` while the server executes `params.name` is the desync the spec calls out; the
       // body is the source of truth and a disagreement MUST be rejected with -32020. Runs before
-      // any session handling so a forged routing header never reaches an upstream. Requests that
-      // carry no routing headers (every pre-revision client) produce no findings.
+      // the SDK so a forged routing header never reaches an upstream. Requests that carry no
+      // routing headers (every pre-revision client) produce no findings.
       if (opts.validateRoutingHeaders !== false) {
         const findings = checkHeaderBodyCoherence(req.headers, body);
         const rejecting = findings.filter((f) => REJECTING_HEADER_RULES.has(f.rule));
@@ -189,95 +211,73 @@ export async function startHttpServer(
           return;
         }
       }
-
-      let transport = existing;
-      if (!transport) {
-        if (!isInitializeRequest(body)) {
-          res.writeHead(400, { "content-type": "application/json" }).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: {
-                code: -32000,
-                message: "No valid session; an initialize request is required",
-              },
-              id: null,
-            }),
-          );
-          return;
-        }
-        if (transports.size >= maxSessions) {
-          res.writeHead(503, { "content-type": "application/json" }).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: { code: -32000, message: "Too many sessions" },
-              id: null,
-            }),
-          );
-          return;
-        }
-        transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (id) => {
-            transports.set(id, transport!);
-          },
-        });
-        transport.onclose = () => {
-          if (transport!.sessionId) transports.delete(transport!.sessionId);
-        };
-        await buildBastionServer(manager).connect(transport);
-      }
-      await transport.handleRequest(req, res, body);
-      return;
     }
 
-    if (req.method === "GET" || req.method === "DELETE") {
-      if (!existing) {
-        res.writeHead(400).end("Missing or unknown Mcp-Session-Id");
-        return;
-      }
-      await existing.handleRequest(req, res);
+    // Hand the request to the SDK handler as a web-standard Request and stream its Response back.
+    const headers = new Headers();
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (v === undefined) continue;
+      if (Array.isArray(v)) for (const x of v) headers.append(k, x);
+      else headers.set(k, v);
+    }
+    const webReq = new Request(url.href, {
+      method: req.method ?? "GET",
+      headers,
+      ...(req.method === "POST" ? { body: raw } : {}),
+    });
+    const resp = await handler.fetch(webReq, { authInfo, parsedBody: body });
+    const outHeaders: Record<string, string> = {};
+    resp.headers.forEach((value, key) => {
+      outHeaders[key] = value;
+    });
+    res.writeHead(resp.status, outHeaders);
+    if (!resp.body) {
+      res.end();
       return;
     }
-
-    res.writeHead(405).end();
+    const reader = resp.body.getReader();
+    req.on("close", () => void reader.cancel().catch(() => undefined));
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+    } finally {
+      res.end();
+    }
   }
 
   await new Promise<void>((resolve) => httpServer.listen(opts.port, opts.host, resolve));
   const address = httpServer.address();
   const boundPort = typeof address === "object" && address ? address.port : opts.port;
   const url = `http://${opts.host}:${boundPort}${opts.path}`;
-  logger.info({ url }, "mcp-bastion HTTP listener started");
+  logger.info({ url, legacy: opts.legacy ?? "stateless" }, "mcp-bastion HTTP listener started");
 
   return {
     url,
-    close: () => shutdown(httpServer, transports),
+    close: async () => {
+      removeTarget();
+      await handler.close().catch(() => undefined);
+      await new Promise<void>((resolve, reject) =>
+        httpServer.close((err) => (err ? reject(err) : resolve())),
+      );
+    },
   };
 }
 
-async function shutdown(
-  httpServer: HttpServer,
-  transports: Map<string, StreamableHTTPServerTransport>,
-): Promise<void> {
-  await Promise.allSettled([...transports.values()].map((t) => t.close()));
-  transports.clear();
-  await new Promise<void>((resolve, reject) =>
-    httpServer.close((err) => (err ? reject(err) : resolve())),
-  );
-}
-
-/** Read and JSON-parse a request body. */
-async function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown> {
+/** Read a request body as text, enforcing a size cap. */
+async function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
     total += (chunk as Buffer).length;
     if (total > maxBytes) {
-      const err = new Error("Payload too large") as Error & { statusCode?: number };
+      const err = new Error("Payload too large") as Error & { statusCode: number };
       err.statusCode = 413;
       throw err;
     }
     chunks.push(chunk as Buffer);
   }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? JSON.parse(raw) : undefined;
+  return Buffer.concat(chunks).toString("utf8");
 }

@@ -10,12 +10,12 @@
  * @packageDocumentation
  */
 import { Command } from "commander";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { loadConfig, defaultConfig } from "./config/index.js";
 import { BASTION_VERSION, UpstreamManager } from "./core/index.js";
 import { logger } from "./observability/index.js";
-import { buildBastionServer, startHttpServer } from "./proxy/index.js";
+import { broadcastToolsChanged, buildBastionServer, startHttpServer } from "./proxy/index.js";
 
 const program = new Command();
 
@@ -44,6 +44,7 @@ async function run(opts: { config?: string; http?: string }): Promise<void> {
     );
   }
   const manager = new UpstreamManager(config);
+  manager.setToolsChangedCallback(() => broadcastToolsChanged());
 
   // Connect upstreams first so the initial tools/list is populated.
   await manager.connectAll();
@@ -76,6 +77,7 @@ async function run(opts: { config?: string; http?: string }): Promise<void> {
       maxSessions: config.listen.maxSessions,
       maxBodyBytes: config.listen.maxBodyBytes,
       validateRoutingHeaders: config.listen.validateRoutingHeaders,
+      legacy: config.listen.legacy,
     });
     closeListener = () => listener.close();
     logger.info(
@@ -88,11 +90,15 @@ async function run(opts: { config?: string; http?: string }): Promise<void> {
       "mcp-bastion started",
     );
   } else {
-    const server = buildBastionServer(manager);
-    await server.connect(new StdioServerTransport());
+    // SDK 2.0 stdio entry: negotiates the era at connection open; `legacy: "reject"` refuses
+    // pre-2026-07-28 clients (downgrade prevention) when configured.
+    const handle = serveStdio(
+      () => buildBastionServer(manager, { principal: "stdio", persistent: true }),
+      { legacy: config.listen.legacy === "reject" ? "reject" : "serve" },
+    );
     closeListener = async () => {
       try {
-        await server.close();
+        await handle.close();
       } catch {
         // Best-effort during shutdown.
       }

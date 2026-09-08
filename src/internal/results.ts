@@ -3,7 +3,7 @@
  *
  * @packageDocumentation
  */
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 
 /**
  * Build a {@link CallToolResult} carrying a single text block.

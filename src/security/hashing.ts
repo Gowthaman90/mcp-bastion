@@ -5,7 +5,7 @@
  * @packageDocumentation
  */
 import { createHash } from "node:crypto";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/server";
 
 /**
  * Deterministically serialize a JSON value with object keys sorted, so that

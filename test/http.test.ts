@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 
 import { BastionConfigSchema, type BastionConfig } from "../src/config/index.js";
 import { UpstreamManager } from "../src/core/index.js";
@@ -11,8 +11,10 @@ import { startHttpServer } from "../src/proxy/index.js";
 import { startMockHttpMcpServer } from "./helpers/http-mcp-server.mjs";
 
 const mockStdio = fileURLToPath(new URL("./fixtures/mock-server.mjs", import.meta.url));
-const textOf = (r: CallToolResult) =>
-  r.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+function textOf(res: unknown): string {
+  const content = ((res as { content?: Array<{ type?: string; text?: string }> }).content ?? []);
+  return content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("");
+}
 
 function cfg(servers: Record<string, unknown>): BastionConfig {
   return BastionConfigSchema.parse({

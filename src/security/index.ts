@@ -38,6 +38,16 @@ export type {
   CachePolicyContext,
   ClampedCacheHints,
 } from "./cache-policy.js";
+export { checkInputRequests, isInputRequired, stripFlaggedInputRequests } from "./mrtr.js";
+export {
+  sealRequestState,
+  openRequestState,
+  isSealedRequestState,
+  generateRequestStateKey,
+  DEFAULT_REQUEST_STATE_TTL_SECONDS,
+} from "./request-state.js";
+export type { OpenResult, SealOptions, OpenOptions, RequestStateBinding, SealedPayload } from "./request-state.js";
+export type { ToolCallOutcome } from "./types.js";
 export { ToolRegistry } from "./tool-registry.js";
 export type { ObserveOptions } from "./tool-registry.js";
 export type {

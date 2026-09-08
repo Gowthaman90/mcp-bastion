@@ -3,15 +3,15 @@ import { fileURLToPath } from "node:url";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { BastionConfigSchema, type BastionConfig } from "../src/config/index.js";
 import { UpstreamManager } from "../src/core/index.js";
 
 const mutating = fileURLToPath(new URL("./fixtures/mutating-server.mjs", import.meta.url));
 
-function textOf(res: CallToolResult): string {
-  return res.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+function textOf(res: unknown): string {
+  const content = ((res as { content?: Array<{ type?: string; text?: string }> }).content ?? []);
+  return content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("");
 }
 
 function descFileWith(content: string): string {

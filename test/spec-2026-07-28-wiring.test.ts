@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client as ModernClient, StreamableHTTPClientTransport as ModernHttp } from "@modelcontextprotocol/client";
 
 import { BastionConfigSchema, type BastionConfig } from "../src/config/index.js";
 import { UpstreamManager } from "../src/core/index.js";
@@ -61,22 +62,28 @@ describe("2026-07-28 wiring: header/body coherence gate (HTTP listener)", () => 
     }
   });
 
-  it("does not reject a conforming request, nor a pre-revision client that sends no routing headers", async () => {
+  it("serves a conforming modern request and a pre-revision client that sends no routing headers", async () => {
     const mgr = new UpstreamManager(cfg({ mock: { command: process.execPath, args: [mockStdio] } }));
     await mgr.connectAll();
     const listener = await startHttpServer(mgr, { host: "127.0.0.1", port: 0, path: "/mcp" });
     try {
-      const conforming = await post(listener.url, { "MCP-Protocol-Version": REV, "Mcp-Method": "initialize" }, initBody);
-      expect(conforming.status).not.toBe(400);
+      // Modern era (2026-07-28): a real SDK 2.0 client negotiates via server/discover and lists
+      // tools statelessly with coherent routing headers.
+      const modern = new ModernClient({ name: "modern", version: "0" }, { versionNegotiation: { mode: "auto" } });
+      await modern.connect(new ModernHttp(new URL(listener.url)));
+      expect(modern.getProtocolEra()).toBe("modern");
+      expect((await modern.listTools()).tools.map((t) => t.name)).toContain("mock__echo");
+      await modern.close();
+      // Legacy era: an initialize handshake with no routing headers is served statelessly.
       const legacy = await post(listener.url, {}, { ...initBody, params: { ...initBody.params, _meta: undefined } });
-      expect(legacy.status).not.toBe(400);
+      expect(legacy.status).toBe(200);
     } finally {
       await listener.close();
       await mgr.closeAll();
     }
   });
 
-  it("can be switched off (validateRoutingHeaders: false)", async () => {
+  it("with Bastion's gate switched off, the SDK's own header validation still rejects a mismatch", async () => {
     const mgr = new UpstreamManager(cfg({ mock: { command: process.execPath, args: [mockStdio] } }));
     await mgr.connectAll();
     const listener = await startHttpServer(mgr, {
@@ -86,8 +93,15 @@ describe("2026-07-28 wiring: header/body coherence gate (HTTP listener)", () => 
       validateRoutingHeaders: false,
     });
     try {
-      const res = await post(listener.url, { "MCP-Protocol-Version": REV, "Mcp-Method": "tools/call" }, initBody);
-      expect(res.status).not.toBe(400);
+      const res = await post(
+        listener.url,
+        { "MCP-Protocol-Version": REV, "Mcp-Method": "tools/call", "Mcp-Name": "read_calendar" },
+        { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "transfer_funds", arguments: {}, _meta: { "io.modelcontextprotocol/protocolVersion": REV } } },
+      );
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { error: { code: number } };
+      // The SDK reports the disagreement as -32020 or, for an incomplete modern envelope, -32602.
+      expect([-32020, -32602]).toContain(json.error.code);
     } finally {
       await listener.close();
       await mgr.closeAll();

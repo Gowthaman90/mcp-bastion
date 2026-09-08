@@ -15,15 +15,22 @@
  *
  * @packageDocumentation
  */
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { InputRequiredResult, Tool } from "@modelcontextprotocol/server";
 
 import { AuditEngine, createSinks, type ComplianceReport } from "../audit/index.js";
 import type { BastionConfig } from "../config/index.js";
 import { UpstreamDisconnectedError } from "../errors.js";
 import { textResult } from "../internal/index.js";
 import { logger } from "../observability/index.js";
-import { runPipeline, SecurityEngine } from "../security/index.js";
-import type { Interceptor, ToolCallContext, ToolSecurityReport } from "../security/index.js";
+import {
+  generateRequestStateKey,
+  isInputRequired,
+  openRequestState,
+  runPipeline,
+  sealRequestState,
+  SecurityEngine,
+} from "../security/index.js";
+import type { Interceptor, ToolCallContext, ToolCallOutcome, ToolSecurityReport } from "../security/index.js";
 import { ControlAction, controlToolName } from "./constants.js";
 import type { ReconnectResult, ServerStatus, ToolRoute } from "./types.js";
 import { UpstreamConnection } from "./upstream-connection.js";
@@ -37,12 +44,18 @@ export class UpstreamManager {
   private toolsChangedListener: () => void = () => {};
   /** Per-server manual-reconnect timestamps — bounds agent-driven subprocess thrash (M5). */
   private readonly lastReconnectAt = new Map<string, number>();
+  /** HMAC key sealing `requestState` envelopes (MCP 2026-07-28 MRTR custody). */
+  private readonly requestStateKey: Uint8Array;
+  private readonly requestStateTtlSeconds: number;
 
   /**
    * @param config The validated Bastion configuration.
    */
   constructor(config: BastionConfig) {
     this.namespaceSeparator = config.namespace.separator;
+    const configuredKey = config.security.requestStateKey ?? process.env.MCP_BASTION_REQUEST_STATE_KEY;
+    this.requestStateKey = configuredKey ? Buffer.from(configuredKey, "utf8") : generateRequestStateKey();
+    this.requestStateTtlSeconds = config.security.requestStateTtlSeconds;
     this.security = new SecurityEngine(config.security, this.namespaceSeparator);
 
     // Audit is placed FIRST so it records blocked calls (short-circuited by the
@@ -131,8 +144,13 @@ export class UpstreamManager {
    * @param name The namespaced tool name (e.g. `github__create_issue`).
    * @param args Tool arguments.
    */
-  async callUpstreamTool(name: string, args: unknown): Promise<CallToolResult> {
+  async callUpstreamTool(
+    name: string,
+    args: unknown,
+    opts: { principal?: string; inputResponses?: Record<string, unknown>; requestState?: string } = {},
+  ): Promise<ToolCallOutcome> {
     const callArgs = (args ?? {}) as Record<string, unknown>;
+    const principal = opts.principal ?? "stdio";
 
     // Re-observe current definitions so a rug pull since the last listing is caught.
     this.syncSecurity();
@@ -158,19 +176,63 @@ export class UpstreamManager {
       );
     }
 
+    // MRTR retry (MCP 2026-07-28): the client echoes the `requestState` Bastion issued on the
+    // previous round. It must be Bastion's own sealed envelope, unexpired, bound to this principal
+    // and this server/tool — only then is the upstream's original state unwrapped and forwarded.
+    let upstreamState: string | undefined;
+    if (opts.requestState !== undefined || opts.inputResponses !== undefined) {
+      const opened = openRequestState(opts.requestState, {
+        key: this.requestStateKey,
+        principal,
+        server: route.server,
+        tool: route.originalName,
+      });
+      if (!opened.ok) {
+        const rules = opened.findings.map((f) => f.rule).join(", ");
+        logger.warn({ tool: name, principal, rules }, "rejected MRTR retry: requestState custody check failed");
+        return textResult(
+          `Blocked by mcp-bastion: the requestState presented for "${name}" failed verification (${rules}). ` +
+            `A continuation must be echoed unchanged, by the same principal, before it expires.`,
+          true,
+        );
+      }
+      upstreamState = opened.upstreamState === "" ? undefined : opened.upstreamState;
+    }
+
     const ctx: ToolCallContext = {
       server: route.server,
       toolName: route.originalName,
       namespacedName: name,
       args: callArgs,
+      principal,
+      inputResponses: opts.inputResponses,
+      requestState: upstreamState,
     };
     try {
       // Security interceptors run first; the terminal step is the real upstream call.
-      return await runPipeline(
+      const outcome = await runPipeline(
         this.interceptors,
         ctx,
-        async () => (await upstream.callTool(route.originalName, callArgs)) as CallToolResult,
+        async () =>
+          (await upstream.callTool(route.originalName, callArgs, {
+            inputResponses: opts.inputResponses,
+            requestState: upstreamState,
+          })) as ToolCallOutcome,
       );
+      // Seal the upstream's continuation before it travels through the model context: the raw
+      // state never leaves Bastion, and the retry can only succeed with this envelope, from this
+      // principal, for this server/tool, before it expires.
+      if (isInputRequired(outcome)) {
+        const sealed = sealRequestState(typeof outcome.requestState === "string" ? outcome.requestState : "", {
+          key: this.requestStateKey,
+          ttlSeconds: this.requestStateTtlSeconds,
+          principal,
+          server: route.server,
+          tool: route.originalName,
+        });
+        return { ...(outcome as InputRequiredResult), requestState: sealed };
+      }
+      return outcome;
     } catch (err) {
       if (err instanceof UpstreamDisconnectedError) {
         return textResult(

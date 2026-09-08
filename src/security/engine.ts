@@ -9,7 +9,7 @@
  *
  * @packageDocumentation
  */
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
 
 import type { SecurityConfig } from "../config/index.js";
 import { ControlAction, controlToolName } from "../core/constants.js";
@@ -21,10 +21,11 @@ import { redactSecrets } from "./dlp.js";
 import { scanToolSet } from "./correlation.js";
 import { checkServerIdentity, hashServerIdentity, type ServerIdentity } from "./identity.js";
 import { TaintTracker } from "./taint.js";
+import { checkInputRequests, isInputRequired, stripFlaggedInputRequests } from "./mrtr.js";
 import { hasSeverityAtLeast, scanText } from "./poisoning.js";
 import { validateArguments } from "./schema.js";
 import { ToolRegistry } from "./tool-registry.js";
-import type { Interceptor, SecurityFinding, ToolSecurityReport } from "./types.js";
+import type { Interceptor, SecurityFinding, ToolCallOutcome, ToolSecurityReport } from "./types.js";
 
 /** Stringify tool-call arguments for heuristic scanning; never throws. */
 function safeStringify(args: unknown): string {
@@ -35,9 +36,9 @@ function safeStringify(args: unknown): string {
   }
 }
 
-/** Concatenate the text blocks of a tool result for heuristic scanning. */
-function resultText(result: CallToolResult): string {
-  const content = (result.content ?? []) as Array<{ type?: string; text?: string }>;
+/** Concatenate the text blocks of a tool result for heuristic scanning (empty for an MRTR round). */
+function resultText(result: ToolCallOutcome): string {
+  const content = (("content" in result ? result.content : undefined) ?? []) as Array<{ type?: string; text?: string }>;
   return content
     .filter((c) => c.type === "text" && typeof c.text === "string")
     .map((c) => c.text)
@@ -189,6 +190,7 @@ export class SecurityEngine {
     if (this.policy.validateArguments) interceptors.push(this.argumentInterceptor());
     if (this.policy.trackDataFlow) interceptors.push(this.dataFlowInterceptor());
     if (this.policy.scanResponses) interceptors.push(this.responseScanInterceptor());
+    if (this.policy.inspectInputRequests) interceptors.push(this.mrtrInterceptor());
     return interceptors;
   }
 
@@ -386,18 +388,21 @@ export class SecurityEngine {
    */
   private responseScanInterceptor(): Interceptor {
     return async (ctx, next) => {
-      let result = await next();
+      const result = await next();
       // Don't second-guess a call another interceptor already blocked.
       if (ctx.securityDecision) return result;
+      // An MRTR continuation carries no tool content to scan; the MRTR gate inspects it instead.
+      if (isInputRequired(result)) return result;
+      let complete = result as CallToolResult;
 
-      const findings = scanText(resultText(result), this.policy.normalizeEvasion);
+      const findings = scanText(resultText(complete), this.policy.normalizeEvasion);
 
       // Inline DLP: strip credential-shaped secret *values* from the result (an enforcing
       // mitigation), independent of whether the response also tripped an injection heuristic.
       if (this.policy.redactResponseSecrets) {
-        const { result: redacted, redactions } = this.redactResultSecrets(result);
+        const { result: redacted, redactions } = this.redactResultSecrets(complete);
         if (redactions > 0) {
-          result = redacted;
+          complete = redacted;
           ctx.redactedSecrets = redactions;
           ctx.findings = [
             ...(ctx.findings ?? []),
@@ -414,7 +419,7 @@ export class SecurityEngine {
         }
       }
 
-      if (findings.length === 0) return result;
+      if (findings.length === 0) return complete;
 
       ctx.responseFindings = findings;
       ctx.findings = [...(ctx.findings ?? []), ...findings];
@@ -434,7 +439,51 @@ export class SecurityEngine {
           true,
         );
       }
-      return result;
+      return complete;
+    };
+  }
+
+  /**
+   * MRTR consent gate (MCP 2026-07-28). Runs after the upstream call; when the upstream answers
+   * `input_required`, inspects each embedded request before Bastion relays it to the client:
+   * credential-shaped elicitations and server-supplied sampling `systemPrompt`s are flagged.
+   * High-severity findings block the round under `balanced`; otherwise the flagged requests are
+   * stripped from what the client sees and the rest is relayed.
+   */
+  private mrtrInterceptor(): Interceptor {
+    return async (ctx, next) => {
+      const result = await next();
+      if (ctx.securityDecision || !isInputRequired(result)) return result;
+      const findings = checkInputRequests(result);
+      if (findings.length === 0) return result;
+      ctx.mrtrFindings = findings;
+      ctx.findings = [...(ctx.findings ?? []), ...findings];
+      this.log.warn(
+        { server: ctx.server, tool: ctx.toolName, rules: findings.map((f) => f.rule) },
+        "input_required round flagged by MRTR gate",
+      );
+      if (this.policy.onInputRequired === "block" && hasSeverityAtLeast(findings, "high")) {
+        ctx.securityDecision = "blocked_input_required";
+        const rules = [...new Set(findings.map((f) => f.rule))].join(", ");
+        return textResult(
+          `Blocked by mcp-bastion: tool "${ctx.toolName}" on server "${ctx.server}" asked for input ` +
+            `that looks like credential phishing or model steering (${rules}). The round was not relayed. ` +
+            `Set security.onInputRequired to "warn" if this is a false positive.`,
+          true,
+        );
+      }
+      const { result: stripped, removed } = stripFlaggedInputRequests(result, findings);
+      if (removed.length > 0) {
+        this.log.warn({ server: ctx.server, tool: ctx.toolName, removed }, "stripped flagged input requests");
+      }
+      if (isInputRequired(stripped) && Object.keys(stripped.inputRequests).length === 0) {
+        ctx.securityDecision = "blocked_input_required";
+        return textResult(
+          `Blocked by mcp-bastion: every input request in the round from "${ctx.toolName}" was flagged and stripped.`,
+          true,
+        );
+      }
+      return stripped as typeof result;
     };
   }
 }

@@ -25,7 +25,8 @@ class MemorySink implements AuditSink {
 const ctx = (over: Partial<ToolCallContext> = {}): ToolCallContext => ({
   server: "s",
   toolName: "t",
-  namespacedName: "s__t",
+  principal: "test",
+    namespacedName: "s__t",
   args: {},
   ...over,
 });

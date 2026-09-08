@@ -18,7 +18,9 @@ export type AuditDecision =
   | "blocked_response"
   | "blocked_schema"
   | "blocked_identity"
-  | "blocked_dataflow";
+  | "blocked_dataflow"
+  | "blocked_input_required"
+  | "blocked_request_state";
 
 /** The observed outcome of a tool call. */
 export type AuditOutcome = "ok" | "error" | "blocked";

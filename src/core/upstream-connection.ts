@@ -8,10 +8,10 @@
  *
  * @packageDocumentation
  */
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import type { CacheableRequestOptions, McpSubscription, ProtocolEra } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import type { Tool } from "@modelcontextprotocol/server";
 
 import type { ReconnectConfig, ServerConfig } from "../config/index.js";
 import { UpstreamDisconnectedError } from "../errors.js";
@@ -33,6 +33,18 @@ export type UpstreamChangeListener = () => void;
 
 type ClientTransport = StdioClientTransport | StreamableHTTPClientTransport;
 
+/** Extra MRTR fields forwarded on a retry (MCP 2026-07-28). */
+export interface CallToolExtra {
+  inputResponses?: Record<string, unknown>;
+  requestState?: string;
+}
+
+/** Map the configured `protocol` to the SDK's negotiation mode. */
+function negotiationMode(protocol: "auto" | "legacy" | "2026-07-28"): "auto" | "legacy" | { pin: string } {
+  if (protocol === "2026-07-28") return { pin: "2026-07-28" };
+  return protocol;
+}
+
 /** Header names that indicate a request carries authentication. */
 const AUTH_HEADERS = ["authorization", "x-api-key", "api-key", "apikey", "x-auth-token", "cookie"];
 
@@ -46,6 +58,8 @@ function headersCarryAuth(headers: Record<string, string> | undefined): boolean 
 export class UpstreamConnection {
   private client: Client | null = null;
   private transport: ClientTransport | null = null;
+  /** Modern-era change stream (`subscriptions/listen`), when the upstream speaks 2026-07-28. */
+  private subscription: McpSubscription | null = null;
   private connectionState: ConnectionState = "disconnected";
   private lastErrorMessage?: string;
   private cachedTools: Tool[] = [];
@@ -100,6 +114,11 @@ export class UpstreamConnection {
   /** `true` iff the upstream is connected and usable. */
   isConnected(): boolean {
     return this.connectionState === "connected" && this.client !== null;
+  }
+
+  /** Negotiated protocol era (`legacy` = pre-2026-07-28 `initialize`; `modern` = 2026-07-28). */
+  get era(): ProtocolEra | undefined {
+    return this.client?.getProtocolEra();
   }
 
   /** Which transport this upstream uses. */
@@ -167,25 +186,33 @@ export class UpstreamConnection {
       logger.warn({ server: this.name, err: this.lastErrorMessage }, "upstream transport error");
     };
 
+    // SDK 2.0 client. Bastion is a gateway, so it never auto-fulfils an `input_required` round —
+    // the continuation is relayed to *its* client, whose user answers. Era negotiation follows the
+    // upstream's configured `protocol` (default `auto`: probe 2026-07-28, fall back to `initialize`).
     const client = new Client(
       { name: BASTION_NAME, version: BASTION_VERSION },
-      { capabilities: {} },
+      {
+        // A gateway advertises the input capabilities its *own* clients may have, so an upstream is
+        // allowed to answer `input_required`; Bastion relays (and gates) each round downstream.
+        capabilities: { elicitation: { form: {}, url: {} }, sampling: {} },
+        versionNegotiation: { mode: negotiationMode(this.config.protocol) },
+        inputRequired: { autoFulfill: false },
+      },
     );
-
-    // Re-list tools when the upstream announces a change. Without this, the cached tool set (and thus
-    // rug-pull detection) only refreshes at connect, so a mid-session definition swap advertised via
-    // `notifications/tools/list_changed` would be missed until the next reconnect. Refreshing the cache
-    // here means the change is re-hashed and caught by the security re-sync before the next tool call.
-    client.fallbackNotificationHandler = async (notification) => {
-      if (notification.method === "notifications/tools/list_changed") {
-        await this.refreshTools(true).catch((err) =>
-          logger.warn(
-            { server: this.name, err: (err as Error)?.message ?? String(err) },
-            "failed to refresh tools after list_changed",
-          ),
-        );
-      }
-    };
+    // Re-list tools when the upstream announces a change. Without this, the cached tool set (and
+    // thus rug-pull detection) only refreshes at connect, so a mid-session definition swap advertised
+    // via `notifications/tools/list_changed` would be missed until the next reconnect. Refreshing the
+    // cache here means the change is re-hashed and caught by the security re-sync before the next
+    // tool call. A raw notification handler is used (not the SDK's list-diffing option) because a
+    // rug pull changes a *description*, not the set of names.
+    client.setNotificationHandler("notifications/tools/list_changed", () => {
+      void this.refreshTools(true).catch((err) =>
+        logger.warn(
+          { server: this.name, err: (err as Error)?.message ?? String(err) },
+          "failed to refresh tools after list_changed",
+        ),
+      );
+    });
 
     try {
       await client.connect(transport);
@@ -195,7 +222,18 @@ export class UpstreamConnection {
       this.reconnectAttempts = 0;
       this.lastErrorMessage = undefined;
       await this.refreshTools();
-      logger.info({ server: this.name, tools: this.cachedTools.length }, "upstream connected");
+      // Modern-era upstreams push nothing unsolicited: open the change stream explicitly.
+      if (client.getProtocolEra() === "modern") {
+        try {
+          this.subscription = await client.listen({ toolsListChanged: true });
+        } catch (err) {
+          logger.debug({ server: this.name, err: (err as Error)?.message ?? String(err) }, "no change stream");
+        }
+      }
+      logger.info(
+        { server: this.name, tools: this.cachedTools.length, era: client.getProtocolEra() },
+        "upstream connected",
+      );
       this.onChange();
     } catch (err) {
       this.lastErrorMessage = (err as Error)?.message ?? String(err);
@@ -238,14 +276,22 @@ export class UpstreamConnection {
    * @returns The upstream's raw `CallToolResult`.
    * @throws {@link UpstreamDisconnectedError} if the upstream is not connected.
    */
-  async callTool(toolName: string, args: unknown): Promise<unknown> {
+  async callTool(toolName: string, args: unknown, extra: CallToolExtra = {}): Promise<unknown> {
     if (!this.isConnected() || !this.client) {
       throw new UpstreamDisconnectedError(this.name);
     }
-    return this.client.callTool({
+    const params: Record<string, unknown> = {
       name: toolName,
       arguments: (args ?? {}) as Record<string, unknown>,
-    });
+    };
+    if (extra.inputResponses) params.inputResponses = extra.inputResponses;
+    if (extra.requestState !== undefined) params.requestState = extra.requestState;
+    // `allowInputRequired` lets an `input_required` continuation come back as a value instead of
+    // being auto-fulfilled or rejected — a gateway relays it.
+    return this.client.callTool(
+      params as unknown as Parameters<Client["callTool"]>[0],
+      { allowInputRequired: true } as unknown as Parameters<Client["callTool"]>[1],
+    );
   }
 
   /**
@@ -275,6 +321,10 @@ export class UpstreamConnection {
     } catch {
       // Best-effort: the transport may already be gone.
     }
+    if (this.subscription) {
+      await this.subscription.close().catch(() => undefined);
+      this.subscription = null;
+    }
     this.client = null;
     this.transport = null;
     if (requested) this.connectionState = "disconnected";
@@ -293,11 +343,13 @@ export class UpstreamConnection {
   private async refreshTools(afterInvalidation = false): Promise<void> {
     if (!this.client) return;
     const before = this.cachedTools.map((t) => t.name).join(" ");
-    const result = await this.client.listTools();
-    const { tools } = result;
-    this.cachedTools = tools;
+    // Bypass the SDK client's own list cache: Bastion polices cache hints itself and must see the
+    // upstream's current definitions (a stale cache would hide exactly the rug pull pinning catches).
+    const result = await this.client.listTools(undefined, { cacheMode: "bypass" } as CacheableRequestOptions);
+    // The client and server packages each bundle their own (structurally equal) `Tool` type.
+    this.cachedTools = result.tools as unknown as Tool[];
     this.policeCacheHints(result, afterInvalidation);
-    const after = tools.map((t) => t.name).join(" ");
+    const after = this.cachedTools.map((t) => t.name).join(" ");
     if (before !== after) this.onChange();
   }
 

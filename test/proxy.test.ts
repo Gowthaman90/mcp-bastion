@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 
 import { BastionConfigSchema } from "../src/config/index.js";
 import { UpstreamManager } from "../src/core/index.js";
@@ -10,8 +10,9 @@ import { buildBastionServer, startHttpServer } from "../src/proxy/index.js";
 
 const mockServer = fileURLToPath(new URL("./fixtures/mock-server.mjs", import.meta.url));
 
-function textOf(res: CallToolResult): string {
-  return res.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+function textOf(res: unknown): string {
+  const content = ((res as { content?: Array<{ type?: string; text?: string }> }).content ?? []);
+  return content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("");
 }
 
 describe("HTTP listener hardening", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/server";
 
 import { hashToolDefinition } from "../src/security/hashing.js";
 import { scanText, scanTool, hasSeverityAtLeast } from "../src/security/poisoning.js";

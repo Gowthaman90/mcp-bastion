@@ -19,6 +19,12 @@ export const StdioServerConfigSchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
   /** Optional working directory for the spawned process. */
   cwd: z.string().optional(),
+  /**
+   * Protocol era negotiation with this upstream: `auto` probes `server/discover` (MCP 2026-07-28)
+   * and falls back to the legacy `initialize` handshake; `legacy` skips the probe; `2026-07-28`
+   * pins the modern era and never falls back.
+   */
+  protocol: z.enum(["auto", "legacy", "2026-07-28"]).default("auto"),
 });
 export type StdioServerConfig = z.infer<typeof StdioServerConfigSchema>;
 
@@ -29,6 +35,8 @@ export const HttpServerConfigSchema = z.object({
   url: z.string().url(),
   /** Optional headers sent on every request (e.g. `Authorization`). */
   headers: z.record(z.string(), z.string()).optional(),
+  /** Protocol era negotiation (see the stdio variant). */
+  protocol: z.enum(["auto", "legacy", "2026-07-28"]).default("auto"),
 });
 export type HttpServerConfig = z.infer<typeof HttpServerConfigSchema>;
 
@@ -51,7 +59,7 @@ export const ReconnectConfigSchema = z
     /** Upper bound on the backoff delay, in milliseconds. */
     maxBackoffMs: z.number().int().positive().default(30_000),
   })
-  .default({});
+  .prefault({});
 export type ReconnectConfig = z.infer<typeof ReconnectConfigSchema>;
 
 /** Periodic liveness probing used to detect silent disconnects. */
@@ -64,7 +72,7 @@ export const HealthCheckConfigSchema = z
     /** Per-probe timeout, in milliseconds. */
     timeoutMs: z.number().int().positive().default(5_000),
   })
-  .default({});
+  .prefault({});
 export type HealthCheckConfig = z.infer<typeof HealthCheckConfigSchema>;
 
 /** How upstream tool names are exposed to the client. */
@@ -79,7 +87,7 @@ export const NamespaceConfigSchema = z
     /** Separator used by the `prefix` strategy. */
     separator: z.string().min(1).default("__"),
   })
-  .default({});
+  .prefault({});
 export type NamespaceConfig = z.infer<typeof NamespaceConfigSchema>;
 
 /** An on-detection action: block the call or warn only. */
@@ -94,6 +102,7 @@ const OnAction = z.enum(["block", "warn"]);
  */
 const ENFORCEMENT_PROFILES = {
   observe: {
+    onInputRequired: "warn",
     onRugPull: "warn",
     onPoisoning: "warn",
     onResponse: "warn",
@@ -102,6 +111,7 @@ const ENFORCEMENT_PROFILES = {
     onDataFlow: "warn",
   },
   balanced: {
+    onInputRequired: "block",
     onRugPull: "block",
     onPoisoning: "warn",
     onResponse: "warn",
@@ -110,6 +120,7 @@ const ENFORCEMENT_PROFILES = {
     onDataFlow: "block",
   },
   strict: {
+    onInputRequired: "block",
     onRugPull: "block",
     onPoisoning: "block",
     onResponse: "block",
@@ -223,6 +234,21 @@ export const SecurityConfigSchema = z
      * pinned in caches indefinitely. Bastion never advertises a longer TTL than this downstream.
      */
     maxCacheTtlMs: z.number().int().nonnegative().default(3_600_000),
+    /**
+     * Inspect the embedded requests of an `input_required` (MRTR) result before relaying them to the
+     * client: credential-shaped elicitations and server-supplied `systemPrompt`s are flagged.
+     */
+    inspectInputRequests: z.boolean().default(true),
+    /** What to do on a high-severity MRTR finding. Defaults from the profile (`block` under `balanced`). */
+    onInputRequired: OnAction.optional(),
+    /**
+     * Key for sealing `requestState` envelopes (HMAC-SHA256). Falls back to the
+     * `MCP_BASTION_REQUEST_STATE_KEY` env var, then to a random per-process key (which is fine for a
+     * single process; set it explicitly when running more than one replica).
+     */
+    requestStateKey: z.string().min(16).optional(),
+    /** Lifetime of a sealed `requestState` envelope, in seconds. */
+    requestStateTtlSeconds: z.number().int().positive().default(300),
   })
   .transform((cfg) => {
     const p = ENFORCEMENT_PROFILES[cfg.enforcementProfile];
@@ -234,9 +260,10 @@ export const SecurityConfigSchema = z
       onSchemaViolation: cfg.onSchemaViolation ?? p.onSchemaViolation,
       onIdentityChange: cfg.onIdentityChange ?? p.onIdentityChange,
       onDataFlow: cfg.onDataFlow ?? p.onDataFlow,
+      onInputRequired: cfg.onInputRequired ?? p.onInputRequired,
     };
   })
-  .default({});
+  .prefault({});
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
 /** Where audit events are delivered. */
@@ -283,7 +310,7 @@ export const AuditConfigSchema = z
     /** Destinations for audit events. */
     sinks: z.array(SinkConfigSchema).default([{ type: "console" }]),
   })
-  .default({});
+  .prefault({});
 export type AuditConfig = z.infer<typeof AuditConfigSchema>;
 
 /** How Bastion exposes itself to clients: as a stdio subprocess or an HTTP server. */
@@ -314,8 +341,14 @@ export const ListenConfigSchema = z
      * routing headers are never affected.
      */
     validateRoutingHeaders: z.boolean().default(true),
+    /**
+     * How pre-2026-07-28 clients are treated: `stateless` serves them (the default: every request is
+     * independent, no `Mcp-Session-Id`, GET/DELETE answered 405); `reject` refuses the older era
+     * outright (`-32022`), which is the downgrade-prevention posture.
+     */
+    legacy: z.enum(["stateless", "reject"]).default("stateless"),
   })
-  .default({});
+  .prefault({});
 export type ListenConfig = z.infer<typeof ListenConfigSchema>;
 
 /** The complete, validated Bastion configuration. */

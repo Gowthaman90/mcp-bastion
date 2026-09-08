@@ -6,6 +6,66 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-08
+
+**The stateless-era release.** mcp-bastion now runs on the MCP TypeScript SDK **2.0** line
+(`@modelcontextprotocol/server` / `client` / `core` / `node`), speaks both protocol eras from one
+process, and adds the two defences that only a gateway can provide once the protocol has no sessions:
+custody of `requestState`, and a consent gate on in-band `input_required` rounds. Every pre-existing
+detection is unchanged (benchmark development coverage on the 24 original vectors is byte-identical).
+
+### Changed — BREAKING
+
+- **SDK 2.0.** `@modelcontextprotocol/sdk` (1.x) is no longer a runtime dependency. Types are re-exported
+  from `@modelcontextprotocol/server`. Zod 4 is required (config schema unchanged for users).
+- **HTTP listener is stateless.** Built on `createMcpHandler`: a fresh front-door server serves every
+  request; there is no `Mcp-Session-Id`, GET/DELETE streams answer 405, `Last-Event-ID` is ignored.
+  `listen.maxSessions` is accepted but has no effect. Pre-2026-07-28 clients are served statelessly by
+  default (`listen.legacy: "stateless"`) or refused with `-32022` (`listen.legacy: "reject"`).
+- **stdio entry uses `serveStdio`**, negotiating the era at connection open (`listen.legacy: "reject"`
+  applies here too).
+
+### Added
+
+- **Dual-stack upstreams.** Each upstream negotiates its era: `servers.<name>.protocol` = `auto`
+  (default: probe `server/discover`, fall back to `initialize`), `legacy`, or `2026-07-28` (pin, never
+  fall back). `bastion__status` reports the negotiated era. Legacy `tools/list_changed` and modern
+  change streams (`subscriptions/listen`) both trigger an immediate cache-bypassing re-list and re-hash.
+- **`requestState` custody (MRTR).** An upstream's continuation state never reaches the model context.
+  Bastion seals it in an HMAC-SHA256 envelope (`bst1.<payload>.<mac>`) bound to the calling principal
+  (bearer-token hash or `stdio`), the upstream server, the tool, and a TTL; the retry is forwarded only
+  after the envelope verifies. Tampered, replayed (other principal / other tool / expired) or raw
+  upstream states are refused with an explicit reason. Config: `security.requestStateKey` (or
+  `MCP_BASTION_REQUEST_STATE_KEY`; random per process if unset), `security.requestStateTtlSeconds` (300).
+  Exports: `sealRequestState`, `openRequestState`, `isSealedRequestState`, `generateRequestStateKey`.
+- **MRTR consent gate.** Every `input_required` round is inspected before relay: credential-shaped
+  elicitations (field names or message text asking for passwords / API keys / tokens) and sampling
+  requests whose `systemPrompt` or messages trip the response heuristics are high-severity findings —
+  blocked under `balanced` (`security.onInputRequired`, default `block`), stripped from the round under
+  `warn`. A clean server-supplied `systemPrompt` is permitted by the spec and is not a finding. Exports:
+  `checkInputRequests`, `isInputRequired`, `stripFlaggedInputRequests`.
+- **Cache hints per request.** Policed `ttlMs` / `cacheScope` are attached both to the `tools/list`
+  result and to the per-request server's `cacheHints`.
+- 21 new tests (`request-state`, `mrtr`, `stateless-era` end-to-end against an SDK 2.0 upstream and a
+  1.x upstream from the same manager); suite 219/219.
+
+### Measured (mcp-defense-bench v0.7.x)
+
+On the 32-vector development corpus: **61% CorpusRobustCoverage (19.4/32), 0 false positives on
+51 matched controls**, up from 52% at v0.9.0. On the eight vectors introduced by the 2026-07-28
+revision: **77% (6.2/8)**, up from 44% — header/body desync 3/3, list-cache poisoning 3/3, MRTR input
+phishing 2/2, requestState forgery 2/3 (the non-normative tool-state-handle case is a miss), transport
+downgrade 1/1, roots-scope 1/1, task authorization 1/2 (the routing-desync variant; task methods are
+not proxied). The 24 pre-existing vectors are unchanged (55% dev / 43% held-out), and the benign-corpus
+false-positive rate is unchanged (13/337) — the gate's first cut flagged every server-supplied
+`systemPrompt` and the benchmark's matched control caught that before release.
+
+### Not yet
+
+Tasks (`tasks/*`) are not proxied — the SDK answers `-32601` on the 2026-07-28 era and does not
+intercept them on the legacy era; MCP Apps (`ui://`) are rendered by the host, not the proxy. Both stay
+honest misses on the benchmark.
+
 ## [0.9.0] - 2026-09-05
 
 "Stateless-era hardening", part 1. When the protocol is stateless, the gateway is the only component

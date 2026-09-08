@@ -216,8 +216,20 @@ only standard MCP calls:
 | `listen.host` / `listen.port`  | string / number            | `127.0.0.1` / `3000` | Bind address for `http` mode.                        |
 | `listen.validateRoutingHeaders`| boolean                    | `true`               | Reject `Mcp-*` routing headers that disagree with the body (`-32020`, MCP 2026-07-28). |
 | `security.maxCacheTtlMs`       | number (ms)                | `3600000`            | Ceiling on upstream `ttlMs` cache hints forwarded downstream (MCP 2026-07-28). |
+| `servers.<name>.protocol`      | `auto`\|`legacy`\|`2026-07-28` | `auto`             | Era negotiation per upstream (probe 2026-07-28, fall back; or pin). |
+| `listen.legacy`                | `stateless` \| `reject`   | `stateless`          | Serve pre-2026-07-28 clients statelessly, or refuse them (`-32022`). |
+| `security.inspectInputRequests`| boolean                    | `true`               | Gate `input_required` rounds (credential phishing, model steering). |
+| `security.onInputRequired`     | `block` \| `warn`          | `block`              | Action on a high-severity MRTR finding (`warn` strips the request). |
+| `security.requestStateKey`     | string (≥16)               | random per process   | HMAC key sealing `requestState` envelopes; or `MCP_BASTION_REQUEST_STATE_KEY`. |
+| `security.requestStateTtlSeconds` | number                  | `300`                | Lifetime of a sealed `requestState` envelope. |
 
 ## Transports
+
+Bastion runs on the MCP TypeScript SDK **2.0** and speaks **both protocol eras** — the stateless
+2026-07-28 revision and the pre-2026 `initialize` handshake — on both faces, per upstream and per
+client. When the protocol is stateless, the gateway is the only component that can still hold security
+state, which is why v1.0 adds `requestState` custody and an `input_required` consent gate (see
+`CHANGELOG.md`).
 
 Bastion speaks two transports on **both** faces:
 

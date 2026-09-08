@@ -64,7 +64,17 @@ export {
   clampCacheHints,
   readCacheHints,
   DEFAULT_MAX_TTL_MS,
+  // v1.0 (MCP 2026-07-28, stateless era): MRTR gate + requestState custody
+  checkInputRequests,
+  isInputRequired,
+  stripFlaggedInputRequests,
+  sealRequestState,
+  openRequestState,
+  isSealedRequestState,
+  generateRequestStateKey,
+  DEFAULT_REQUEST_STATE_TTL_SECONDS,
 } from "./security/index.js";
+export type { OpenResult, SealOptions, OpenOptions, ToolCallOutcome } from "./security/index.js";
 export type {
   HeaderBag,
   HeaderCheckContext,

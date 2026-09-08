@@ -16,7 +16,7 @@
  *
  * @packageDocumentation
  */
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/server";
 
 import { scanText } from "./poisoning.js";
 import type { SecurityFinding } from "./types.js";

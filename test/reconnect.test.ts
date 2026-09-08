@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { BastionConfigSchema, type BastionConfig } from "../src/config/index.js";
 import { UpstreamManager } from "../src/core/index.js";
 
 const crashable = fileURLToPath(new URL("./fixtures/crashable-server.mjs", import.meta.url));
 
-function textOf(res: CallToolResult): string {
-  return res.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+function textOf(res: unknown): string {
+  const content = ((res as { content?: Array<{ type?: string; text?: string }> }).content ?? []);
+  return content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("");
 }
 
 /** Poll `predicate` until it returns true or the timeout elapses. */

@@ -1,6 +1,6 @@
 {
   "name": "mcp-bastion",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "mcpName": "io.github.Gowthaman90/mcp-bastion",
   "description": "Reliability + security proxy for the Model Context Protocol (MCP): self-healing connections, runtime tool-security (rug-pull/poisoning detection), and a compliance-mapped audit trail.",
   "type": "module",
@@ -73,13 +73,17 @@
     "access": "public"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/core": "^2.0.0",
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "commander": "^12.1.0",
     "pino": "^9.5.0",
-    "zod": "^3.23.8"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.15.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/node": "^20.14.0",
     "eslint": "^9.15.0",
     "eslint-config-prettier": "^9.1.0",

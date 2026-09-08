@@ -11,9 +11,8 @@
  *
  * @packageDocumentation
  */
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-import type { Interceptor, NextFn, ToolCallContext } from "./types.js";
+import type { Interceptor, NextFn, ToolCallContext, ToolCallOutcome } from "./types.js";
 
 /**
  * Run `ctx` through `interceptors` in order, finishing with `final`.
@@ -27,10 +26,10 @@ export function runPipeline(
   interceptors: readonly Interceptor[],
   ctx: ToolCallContext,
   final: NextFn,
-): Promise<CallToolResult> {
+): Promise<ToolCallOutcome> {
   let lastCalled = -1;
 
-  const dispatch = (index: number): Promise<CallToolResult> => {
+  const dispatch = (index: number): Promise<ToolCallOutcome> => {
     if (index <= lastCalled) {
       return Promise.reject(new Error("next() called multiple times in a single interceptor"));
     }

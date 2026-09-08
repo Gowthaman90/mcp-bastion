@@ -17,7 +17,7 @@
  *
  * @packageDocumentation
  */
-import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
 
 import { ControlAction, controlToolName, type UpstreamManager } from "../core/index.js";
 import { textResult } from "../internal/index.js";

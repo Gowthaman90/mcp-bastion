@@ -7,7 +7,8 @@
  * @packageDocumentation
  */
 import { randomUUID } from "node:crypto";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
+import type { ToolCallOutcome } from "../security/types.js";
 
 import type { AuditConfig } from "../config/index.js";
 import { logger } from "../observability/index.js";
@@ -90,9 +91,11 @@ export class AuditEngine {
     ctx: ToolCallContext,
     traceId: string,
     durationMs: number,
-    result: CallToolResult | undefined,
+    callOutcome: ToolCallOutcome | undefined,
     threw: boolean,
   ): void {
+    // An MRTR continuation is neither ok nor error: it has no content yet. Record it as ok.
+    const result = callOutcome && "content" in callOutcome ? (callOutcome as CallToolResult) : undefined;
     const decision: AuditDecision = ctx.securityDecision ?? "allowed";
     const outcome: AuditOutcome = threw
       ? "error"

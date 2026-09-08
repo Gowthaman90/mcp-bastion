@@ -3,7 +3,10 @@
  *
  * @packageDocumentation
  */
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, InputRequiredResult } from "@modelcontextprotocol/server";
+
+/** What a tool call yields: a complete result, or an MRTR `input_required` continuation. */
+export type ToolCallOutcome = CallToolResult | InputRequiredResult;
 
 /** Severity of a security finding. */
 export type Severity = "low" | "medium" | "high";
@@ -43,6 +46,14 @@ export interface ToolCallContext {
   namespacedName: string;
   /** Parsed tool arguments. */
   args: Record<string, unknown>;
+  /** Calling principal (bearer-token subject hash, or `stdio`). Binds sealed requestState. */
+  principal: string;
+  /** MRTR retry: the client's answers to a previous `input_required` round. */
+  inputResponses?: Record<string, unknown>;
+  /** MRTR retry: the upstream's own continuation state, already unsealed by Bastion. */
+  requestState?: string;
+  /** Findings on the embedded requests of an `input_required` result. */
+  mrtrFindings?: SecurityFinding[];
 
   // --- Annotations populated by interceptors for downstream observers (e.g. audit) ---
 
@@ -61,14 +72,16 @@ export interface ToolCallContext {
     | "blocked_response"
     | "blocked_schema"
     | "blocked_identity"
-    | "blocked_dataflow";
+    | "blocked_dataflow"
+    | "blocked_input_required"
+    | "blocked_request_state";
 }
 
 /** Continuation that invokes the next interceptor (or the upstream call). */
-export type NextFn = () => Promise<CallToolResult>;
+export type NextFn = () => Promise<ToolCallOutcome>;
 
 /**
  * A composable middleware around a tool call. It may observe, annotate, short-circuit
  * (return a result without calling `next`), or pass through by returning `next()`.
  */
-export type Interceptor = (ctx: ToolCallContext, next: NextFn) => Promise<CallToolResult>;
+export type Interceptor = (ctx: ToolCallContext, next: NextFn) => Promise<ToolCallOutcome>;
