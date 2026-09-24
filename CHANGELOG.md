@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-09-24
+
+- Archival release for Zenodo (DOI minting). `CITATION.cff` gains the author ORCID, version and release
+  date; the stale benchmark figure is removed from its abstract. No functional change.
+
 ## [1.0.2] - 2026-09-08
 
 - Fix two unchecked type assertions in the new end-to-end test file that failed `tsc --noEmit` (and

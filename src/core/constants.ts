@@ -13,7 +13,7 @@
 export const BASTION_NAME = "mcp-bastion";
 
 /** Current Bastion version. Kept in sync with `package.json` — enforced by test/version.test.ts. */
-export const BASTION_VERSION = "1.0.2";
+export const BASTION_VERSION = "1.0.3";
 
 /** Namespace under which Bastion exposes its own control tools. */
 export const CONTROL_NAMESPACE = "bastion";
