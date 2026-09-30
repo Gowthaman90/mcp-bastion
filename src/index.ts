@@ -73,6 +73,8 @@ export {
   isSealedRequestState,
   generateRequestStateKey,
   DEFAULT_REQUEST_STATE_TTL_SECONDS,
+  // v1.1: human-oversight gaps (false-error escalation; standing-grant check is inside checkInputRequests)
+  checkErrorSteering,
 } from "./security/index.js";
 export type { OpenResult, SealOptions, OpenOptions, ToolCallOutcome } from "./security/index.js";
 export type {

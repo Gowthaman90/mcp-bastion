@@ -38,6 +38,7 @@ export type {
   CachePolicyContext,
   ClampedCacheHints,
 } from "./cache-policy.js";
+export { checkErrorSteering } from "./error-steering.js";
 export { checkInputRequests, isInputRequired, stripFlaggedInputRequests } from "./mrtr.js";
 export {
   sealRequestState,

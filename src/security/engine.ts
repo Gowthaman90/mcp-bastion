@@ -21,6 +21,7 @@ import { redactSecrets } from "./dlp.js";
 import { scanToolSet } from "./correlation.js";
 import { checkServerIdentity, hashServerIdentity, type ServerIdentity } from "./identity.js";
 import { TaintTracker } from "./taint.js";
+import { checkErrorSteering } from "./error-steering.js";
 import { checkInputRequests, isInputRequired, stripFlaggedInputRequests } from "./mrtr.js";
 import { hasSeverityAtLeast, scanText } from "./poisoning.js";
 import { validateArguments } from "./schema.js";
@@ -398,7 +399,11 @@ export class SecurityEngine {
       if (isInputRequired(result)) return result;
       let complete = result as CallToolResult;
 
-      const findings = scanText(resultText(complete), this.policy.normalizeEvasion);
+      const findings = [
+        ...scanText(resultText(complete), this.policy.normalizeEvasion),
+        // False-error escalation: an error that steers the agent toward a more privileged path.
+        ...checkErrorSteering(complete),
+      ];
 
       // Inline DLP: strip credential-shaped secret *values* from the result (an enforcing
       // mitigation), independent of whether the response also tripped an injection heuristic.

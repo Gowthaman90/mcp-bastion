@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+Human-oversight gaps (the EU AI Act Art. 14 set in mcp-defense-bench v0.8.0: three of its seven vectors
+had no measured defence in any tool).
+
+- **False-error escalation check** (`checkErrorSteering`, rule `error-privilege-steering`, `medium`).
+  Runs in the response scan on every tool result. Flags an error-shaped result whose text steers the
+  agent toward a more privileged path (a shell/exec/admin-style tool call, `sudo`, elevated or broader
+  permissions, `--force`-style flags) or tells it to switch a safety control off. Advisory: the result is
+  relayed and the finding is audited.
+- **Standing-grant elicitation** in the MRTR consent gate (rule `mrtr-standing-grant`, `medium`). Flags an
+  in-band elicitation that asks for a persistent approval ("always allow", "don't ask again") on a broad
+  or sensitive capability, in the message or in the form's options. Advisory.
+- Measured locally against mcp-defense-bench v0.8.0 (scratch copy, adapter wired to the new check; not
+  published): dev 61% → 62% CorpusRobustCoverage, uncovered vectors 6 → 5; held-out 32% → 33%; matched-
+  control false positives still 0/51 dev and 0/48 held-out; benign corpus 13 → 14 flags (the new one is an
+  EACCES error that suggests "elevated privileges", kept as a disclosed cost rather than tuned away). The
+  standing-grant check does not score yet: the benchmark's consent-fatigue fixture is not elicitation-
+  shaped, so the adapter still reports it as a miss.
+
 ## [1.0.3] - 2026-09-24
 
 - Archival release for Zenodo (DOI minting). `CITATION.cff` gains the author ORCID, version and release

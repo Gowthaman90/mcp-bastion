@@ -13,6 +13,10 @@
  *     text trips the response heuristics (override / exfiltration / concealment directives): the
  *     server steering the client's LLM through a channel the user never sees. A clean systemPrompt
  *     is permitted by the spec and is not a finding.
+ *  3. **Standing-grant elicitation** (consent fatigue) — an elicitation that asks the user for a
+ *     persistent approval ("always allow", "don't ask again") on a broad or sensitive capability.
+ *     One click converts a single approval into standing authority the user will never see again.
+ *     Advisory (`medium`): the request is relayed, but the audit trail records it.
  *
  * Pure functions over the result object; the engine decides block / strip / warn.
  *
@@ -25,6 +29,13 @@ const CREDENTIAL_FIELD =
   /(^|[_\s-])(password|passwd|passcode|pin|api[_-]?key|apikey|secret|token|access[_-]?token|refresh[_-]?token|bearer|private[_-]?key|credential|client[_-]?secret|otp|2fa|mfa)([_\s-]|$)/i;
 const CREDENTIAL_ASK =
   /\b(re-?enter|enter|provide|paste|confirm|type|supply)\b[^.]{0,80}\b(password|passcode|api key|api[_-]key|access token|refresh token|secret key|private key|credentials?|one-time code|verification code)\b/i;
+
+/** Wording that turns one approval into a standing one. */
+const STANDING =
+  /\b(always (allow|approve|permit|trust)|allow always|don'?t ask (me )?again|never ask again|remember (this|my) (choice|decision|approval)|permanent(ly)?|for all future|auto-?approve|from now on)\b/i;
+/** A capability broad or sensitive enough that a standing grant is disproportionate. */
+const BROAD_CAPABILITY =
+  /(\b(all|any|every|full|unrestricted|admin|root)\b|\*|(^|[.:_\-/\s])(write|delete|remove|execute|exec|shell|send|network|filesystem|fs)([.:_\-/\s]|$))/i;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -46,6 +57,41 @@ function requestedFields(params: Record<string, unknown>): string[] {
   const schema = isRecord(params.requestedSchema) ? params.requestedSchema : undefined;
   const props = schema && isRecord(schema.properties) ? Object.keys(schema.properties) : [];
   return props;
+}
+
+/** String values of an elicitation schema: enum options, defaults, titles and descriptions. */
+function schemaStrings(params: Record<string, unknown>): string[] {
+  const schema = isRecord(params.requestedSchema) ? params.requestedSchema : undefined;
+  const props = schema && isRecord(schema.properties) ? Object.values(schema.properties) : [];
+  const out: string[] = [];
+  for (const p of props) {
+    if (!isRecord(p)) continue;
+    for (const k of ["title", "description", "default"])
+      if (typeof p[k] === "string") out.push(p[k] as string);
+    const options = [p.enum, p.enumNames, isRecord(p.items) ? p.items.enum : undefined];
+    for (const o of options)
+      if (Array.isArray(o)) for (const v of o) if (typeof v === "string") out.push(v);
+    for (const k of ["oneOf", "anyOf"]) {
+      const alts = p[k];
+      if (Array.isArray(alts))
+        for (const a of alts)
+          if (isRecord(a))
+            for (const f of ["const", "title"])
+              if (typeof a[f] === "string") out.push(a[f] as string);
+    }
+  }
+  return out;
+}
+
+/**
+ * A standing-grant request: persistent-approval wording in the message or a form option, together
+ * with a broad or sensitive capability anywhere in the request. Returns the matched wording, or null.
+ */
+function standingGrant(message: string, params: Record<string, unknown>): string | null {
+  const texts = [message, ...schemaStrings(params)];
+  const wording = texts.map((t) => STANDING.exec(t)?.[0]).find(Boolean);
+  if (!wording) return null;
+  return texts.some((t) => BROAD_CAPABILITY.test(t)) ? wording : null;
 }
 
 /**
@@ -74,6 +120,14 @@ export function checkInputRequests(result: unknown): SecurityFinding[] {
           rule: "mrtr-credential-elicitation",
           severity: "high",
           excerpt: `[${key}] elicitation message asks for a credential: "${message.slice(0, 80)}"`,
+        });
+      }
+      const standing = standingGrant(message, params);
+      if (standing) {
+        findings.push({
+          rule: "mrtr-standing-grant",
+          severity: "medium",
+          excerpt: `[${key}] elicitation asks for a standing grant on a broad capability: "${standing}"`,
         });
       }
       // URL-mode elicitation to an external origin is a phishing surface too; flag as advisory.
