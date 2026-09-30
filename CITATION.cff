@@ -18,8 +18,8 @@ abstract: >-
   compliance-mapped audit trail crosswalked to the NIST AI RMF and the OWASP
   Top 10 for LLM Applications.
 license: Apache-2.0
-version: "1.0.3"
-date-released: "2026-09-24"
+version: "1.1.0"
+date-released: "2026-09-30"
 keywords:
   - Model Context Protocol
   - MCP

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-30
+
 Human-oversight gaps (the EU AI Act Art. 14 set in mcp-defense-bench v0.8.0: three of its seven vectors
 had no measured defence in any tool).
 
@@ -17,8 +19,7 @@ had no measured defence in any tool).
 - **Standing-grant elicitation** in the MRTR consent gate (rule `mrtr-standing-grant`, `medium`). Flags an
   in-band elicitation that asks for a persistent approval ("always allow", "don't ask again") on a broad
   or sensitive capability, in the message or in the form's options. Advisory.
-- Measured locally against mcp-defense-bench v0.8.0 (scratch copy, adapter wired to the new check; not
-  published): dev 61% → 62% CorpusRobustCoverage, uncovered vectors 6 → 5; held-out 32% → 33%; matched-
+- Measured against mcp-defense-bench v0.8.0 (leaderboard re-measured the same day): dev 61% → 62% CorpusRobustCoverage, uncovered vectors 6 → 5; held-out 32% → 33%; matched-
   control false positives still 0/51 dev and 0/48 held-out; benign corpus 13 → 14 flags (the new one is an
   EACCES error that suggests "elevated privileges", kept as a disclosed cost rather than tuned away). The
   standing-grant check does not score yet: the benchmark's consent-fatigue fixture is not elicitation-
