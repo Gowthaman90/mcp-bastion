@@ -9,7 +9,7 @@ _Self-healing connections, runtime tool-security, and a compliance-mapped audit 
 [![npm version](https://img.shields.io/npm/v/mcp-bastion.svg?color=cb3837&logo=npm)](https://www.npmjs.com/package/mcp-bastion)
 [![npm downloads](https://img.shields.io/npm/dm/mcp-bastion.svg?color=cb3837)](https://www.npmjs.com/package/mcp-bastion)
 [![MCP Registry](https://img.shields.io/badge/MCP_Registry-listed-6f42c1)](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.Gowthaman90/mcp-bastion)
-[![Measured coverage](<https://img.shields.io/badge/mcp--defense--bench-62%25_coverage_(32_vectors)-2ea44f>)](https://github.com/Gowthaman90/mcp-defense-bench)
+[![Measured coverage](<https://img.shields.io/badge/mcp--defense--bench-66%25_coverage_(37_vectors)-2ea44f>)](https://github.com/Gowthaman90/mcp-defense-bench)
 [![mcp-bastion MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Gowthaman90/mcp-bastion/badges/score.svg)](https://glama.ai/mcp/servers/Gowthaman90/mcp-bastion)
 [![CI](https://github.com/Gowthaman90/mcp-bastion/actions/workflows/ci.yml/badge.svg)](https://github.com/Gowthaman90/mcp-bastion/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
@@ -32,7 +32,7 @@ your servers run unchanged, and removing Bastion is a one-line config revert.
 
 📦 **Package:** [`mcp-bastion` on npm](https://www.npmjs.com/package/mcp-bastion) · 🗂️ **Official MCP Registry:** `io.github.Gowthaman90/mcp-bastion`
 
-🔒 **Security, measured:** on the open, vendor-neutral [mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench), Bastion covers **63% of the MCP attack surface (15.0/24 vectors; 11 enforced)** at zero false positives — the broadest of the proxies measured.
+🔒 **Security, measured:** on the open, vendor-neutral [mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench) v0.9.0, Bastion covers **66% of the MCP attack surface (24.6/37 vectors; 23 enforced)** on development fixtures and **53%** on the pre-registered held-out set, at zero false positives on matched controls — the broadest of the proxies measured.
 
 📖 **Launch story:** [Medium](https://medium.com/p/e74f638e9e15) · [dev.to](https://dev.to/gowthaman90/the-mcp-reliability-security-gap-and-an-open-source-proxy-that-fills-it-3ppo)
 
@@ -318,7 +318,7 @@ sub-agents behind one Bastion.
 
 ## Delegation checks
 
-_Unreleased._ In gateway mode a caller (say, a master agent working for a signed-in user) sends one
+_Since v1.2.0._ In gateway mode a caller (say, a master agent working for a signed-in user) sends one
 short-lived delegate JWT per sub-agent, each in its own header. Each sub-agent sees only its own token.
 Bastion sees the whole request, so it can check what none of them can, **without holding any secret or
 key**:
