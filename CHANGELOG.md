@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-16
+
 Per-user identity forwarding (gateway mode), so one Bastion can sit between an agent and sub-agents
 that must each run as the signed-in user.
 
