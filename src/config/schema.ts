@@ -65,6 +65,41 @@ const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set([
   "mcp-name",
 ]);
 
+/**
+ * Keyless delegation checks for one upstream (gateway mode): which forwarded header carries the
+ * caller's delegate JWT, and the claims policy Bastion applies to it before anything is sent.
+ * Bastion holds no secret: in `structural` mode it decodes and checks the claims, it does not
+ * verify the signature (the upstream remains the authenticator).
+ */
+export const DelegationServerConfigSchema = z.strictObject({
+  /**
+   * The `forwardHeaders` key (upstream header name) whose value is the delegate token. Defaults to
+   * the only `forwardHeaders` key; required when there are several.
+   */
+  header: HeaderNameSchema.optional(),
+  /** The audience this upstream's tokens must carry (exact, case-sensitive). Required. */
+  audience: z.string().min(1),
+  /**
+   * `structural` (the default) checks claims without verifying the signature. `signature` (JWKS
+   * verification) is reserved for a later release and is rejected at config load for now.
+   */
+  verify: z.enum(["structural", "signature"]).default("structural"),
+  /** Longest accepted token lifetime (`exp` − `iat`), in seconds. */
+  maxLifetimeSeconds: z.number().int().positive().default(3600),
+  /** Clock tolerance applied to `exp` and `nbf`, in seconds. */
+  clockSkewSeconds: z.number().int().nonnegative().max(300).default(30),
+  /**
+   * Agents allowed to act for the user: the current actor (`act.sub`, else `act.client_id`) must be
+   * one of these. Unset = any actor.
+   */
+  allowedActors: z.array(z.string().min(1)).nonempty().optional(),
+  /** Require an `act` claim (a token the user's own client presents directly is then refused). */
+  requireActor: z.boolean().default(false),
+  /** Longest accepted actor chain (current actor plus nested prior actors). Unset = no limit. */
+  maxChainDepth: z.number().int().positive().optional(),
+});
+export type DelegationServerConfig = z.infer<typeof DelegationServerConfigSchema>;
+
 /** A remote upstream reached over Streamable HTTP. */
 export const HttpServerConfigSchema = z
   .object({
@@ -99,6 +134,11 @@ export const HttpServerConfigSchema = z
      * of the standard ones (`Authorization`, `X-API-Key`, …). `forwardHeaders` keys always count.
      */
     authHeaders: z.array(HeaderNameSchema).optional(),
+    /**
+     * Keyless delegation checks on the delegate JWT carried in one of this upstream's
+     * `forwardHeaders` (see {@link DelegationServerConfigSchema}). Requires `forwardHeaders`.
+     */
+    delegation: DelegationServerConfigSchema.optional(),
   })
   .superRefine((cfg, ctx) => {
     for (const [upstream, incoming] of Object.entries(cfg.forwardHeaders ?? {})) {
@@ -118,11 +158,51 @@ export const HttpServerConfigSchema = z
         });
       }
     }
+    if (cfg.delegation) {
+      const keys = Object.keys(cfg.forwardHeaders ?? {});
+      if (keys.length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["delegation"],
+          message:
+            "delegation needs forwardHeaders: the delegate token is read from a forwarded header",
+        });
+      } else if (cfg.delegation.header === undefined && keys.length > 1) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["delegation", "header"],
+          message: `delegation.header is required when forwardHeaders has several keys (${keys.join(", ")})`,
+        });
+      } else if (
+        cfg.delegation.header !== undefined &&
+        !keys.some((k) => k.toLowerCase() === cfg.delegation!.header!.toLowerCase())
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["delegation", "header"],
+          message: `delegation.header "${cfg.delegation.header}" must be a forwardHeaders key (${keys.join(", ")})`,
+        });
+      }
+      if (cfg.delegation.verify === "signature") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["delegation", "verify"],
+          message:
+            'delegation.verify "signature" is not yet supported: use "structural" (claims checked, signature left to the upstream)',
+        });
+      }
+    }
   });
 export type HttpServerConfig = z.infer<typeof HttpServerConfigSchema>;
 
 /** Keys that only make sense on an HTTP upstream (they act on per-request HTTP headers). */
-const HTTP_ONLY_KEYS = ["forwardHeaders", "onMissingForwardedHeader", "connect", "authHeaders"];
+const HTTP_ONLY_KEYS = [
+  "forwardHeaders",
+  "onMissingForwardedHeader",
+  "connect",
+  "authHeaders",
+  "delegation",
+];
 
 /**
  * A single upstream MCP server that Bastion proxies — either a local `stdio`
@@ -214,6 +294,8 @@ const ENFORCEMENT_PROFILES = {
     onSchemaViolation: "warn",
     onIdentityChange: "warn",
     onDataFlow: "warn",
+    onDelegation: "warn",
+    onDelegationChain: "warn",
   },
   balanced: {
     onInputRequired: "block",
@@ -223,6 +305,8 @@ const ENFORCEMENT_PROFILES = {
     onSchemaViolation: "block",
     onIdentityChange: "block",
     onDataFlow: "block",
+    onDelegation: "block",
+    onDelegationChain: "warn",
   },
   strict: {
     onInputRequired: "block",
@@ -232,6 +316,8 @@ const ENFORCEMENT_PROFILES = {
     onSchemaViolation: "block",
     onIdentityChange: "block",
     onDataFlow: "block",
+    onDelegation: "block",
+    onDelegationChain: "block",
   },
 } as const;
 
@@ -354,6 +440,16 @@ export const SecurityConfigSchema = z
     requestStateKey: z.string().min(16).optional(),
     /** Lifetime of a sealed `requestState` envelope, in seconds. */
     requestStateTtlSeconds: z.number().int().positive().default(300),
+    /**
+     * What to do on a delegation finding (malformed token, wrong audience, passthrough, user mixing,
+     * validity window, actor). Defaults from the profile (`block` under `balanced`).
+     */
+    onDelegation: OnAction.optional(),
+    /**
+     * What to do when a delegate token's prior-actor chain is too deep or cyclic. Prior actors are
+     * informational (RFC 8693 §4.1), so this defaults to `warn` except under `strict`.
+     */
+    onDelegationChain: OnAction.optional(),
   })
   .transform((cfg) => {
     const p = ENFORCEMENT_PROFILES[cfg.enforcementProfile];
@@ -366,6 +462,8 @@ export const SecurityConfigSchema = z
       onIdentityChange: cfg.onIdentityChange ?? p.onIdentityChange,
       onDataFlow: cfg.onDataFlow ?? p.onDataFlow,
       onInputRequired: cfg.onInputRequired ?? p.onInputRequired,
+      onDelegation: cfg.onDelegation ?? p.onDelegation,
+      onDelegationChain: cfg.onDelegationChain ?? p.onDelegationChain,
     };
   })
   .prefault({});
@@ -456,6 +554,30 @@ export const ListenConfigSchema = z
   .prefault({});
 export type ListenConfig = z.infer<typeof ListenConfigSchema>;
 
+/** Request-wide delegation settings, shared by every upstream with a `delegation` block. */
+export const DelegationConfigSchema = z
+  .strictObject({
+    /**
+     * Audiences that identify Bastion itself. A delegate token for one of these (or with no `aud`)
+     * must never be relayed upstream: that is token passthrough.
+     */
+    gatewayAudiences: z.array(z.string().min(1)).default([]),
+    /** All delegate tokens in one request must name the same user (`iss` + `sub`). */
+    oneUserPerRequest: z.boolean().default(true),
+    /**
+     * How the audit record names the user: `hash` (default) records an HMAC-SHA256 pseudonym of
+     * `iss|sub`; `plain` records `sub` as is.
+     */
+    recordSubject: z.enum(["hash", "plain"]).default("hash"),
+    /**
+     * Key for the subject pseudonym. Falls back to `MCP_BASTION_SUBJECT_KEY`, then the audit
+     * integrity key, then a random per-process key (pseudonyms then do not link across restarts).
+     */
+    subjectKey: z.string().min(16).optional(),
+  })
+  .prefault({});
+export type DelegationConfig = z.infer<typeof DelegationConfigSchema>;
+
 /** The complete, validated Bastion configuration. */
 export const BastionConfigSchema = z
   .object({
@@ -467,6 +589,7 @@ export const BastionConfigSchema = z
     security: SecurityConfigSchema,
     audit: AuditConfigSchema,
     listen: ListenConfigSchema,
+    delegation: DelegationConfigSchema,
   })
   .superRefine((cfg, ctx) => {
     for (const [name, server] of Object.entries(cfg.servers)) {
@@ -486,6 +609,30 @@ export const BastionConfigSchema = z
           code: "custom",
           path: ["servers", name, "forwardHeaders"],
           message: `cannot forward the incoming "authorization" header while listen.authToken is set: it carries Bastion's own bearer token`,
+        });
+      }
+    }
+    // Each upstream's audience must be its own: a shared audience would let one upstream's token be
+    // routed to the other undetected, and a gateway audience would make passthrough look legitimate.
+    const audienceOwner = new Map<string, string>();
+    for (const [name, server] of Object.entries(cfg.servers)) {
+      if (server.transport !== "http" || !server.delegation) continue;
+      const { audience } = server.delegation;
+      const owner = audienceOwner.get(audience);
+      if (owner !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["servers", name, "delegation", "audience"],
+          message: `delegation audience "${audience}" is already used by "${owner}": each upstream needs its own audience`,
+        });
+      } else {
+        audienceOwner.set(audience, name);
+      }
+      if (cfg.delegation.gatewayAudiences.includes(audience)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["servers", name, "delegation", "audience"],
+          message: `delegation audience "${audience}" is listed in delegation.gatewayAudiences: an upstream audience cannot also identify Bastion`,
         });
       }
     }

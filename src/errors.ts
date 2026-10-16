@@ -47,3 +47,18 @@ export class MissingForwardedHeaderError extends BastionError {
     );
   }
 }
+
+/**
+ * Raised (before anything is sent) when the current request's delegate token for an upstream failed
+ * a blocking delegation check. Names the rules only, never a token or claim value.
+ */
+export class DelegationBlockedError extends BastionError {
+  constructor(
+    public readonly server: string,
+    public readonly rules: readonly string[],
+  ) {
+    super(
+      `${server}: the delegation token failed ${rules.join(", ")}, so the request was not forwarded.`,
+    );
+  }
+}

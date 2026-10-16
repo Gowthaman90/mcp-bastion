@@ -20,7 +20,8 @@ export type AuditDecision =
   | "blocked_identity"
   | "blocked_dataflow"
   | "blocked_input_required"
-  | "blocked_request_state";
+  | "blocked_request_state"
+  | "blocked_delegation";
 
 /** The observed outcome of a tool call. */
 export type AuditOutcome = "ok" | "error" | "blocked";
@@ -31,6 +32,28 @@ export interface FrameworkMapping {
   nistAiRmf: string[];
   /** OWASP LLM Top 10 categories (e.g. `LLM01: Prompt Injection`). */
   owaspLlm: string[];
+}
+
+/**
+ * The "who acted for whom" record of one delegated call. Never holds the token, and no claim value
+ * beyond these fields.
+ */
+export interface AuditDelegationRecord {
+  /** `hmac:` + 16 hex of HMAC-SHA256(subjectKey, `iss|sub`), or `sub` itself under `recordSubject: "plain"`. */
+  subject: string | null;
+  issuer: string | null;
+  /** The upstream's configured audience. */
+  audience: string;
+  /** `jti`, when present. */
+  tokenId: string | null;
+  /** `exp` as ISO-8601, when present. */
+  expiresAt: string | null;
+  /** Current actor first, then prior actors (agent ids). */
+  actors: string[];
+  chainDepth: number;
+  /** `structural`: claims checked, signature not verified. */
+  verified: "structural";
+  findings: { rule: string; severity: Severity }[];
 }
 
 /** A single, structured audit record for one tool call. */
@@ -62,6 +85,8 @@ export interface AuditEvent {
    * `["x-cso-identity"]`. Records that an identity was carried, never its value.
    */
   forwardedHeaders?: string[];
+  /** Who acted for whom (keyless delegation checks), on calls to an upstream with `delegation`. */
+  delegation?: AuditDelegationRecord;
   /** Previous event's hash (present only when tamper-evidence is enabled). */
   prevHash?: string;
   /** This event's hash over its content + `prevHash` (tamper-evidence). */

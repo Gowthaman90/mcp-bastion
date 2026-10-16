@@ -5,6 +5,8 @@
  */
 import type { CallToolResult, InputRequiredResult } from "@modelcontextprotocol/server";
 
+import type { AuditDelegationRecord } from "../audit/types.js";
+
 /** What a tool call yields: a complete result, or an MRTR `input_required` continuation. */
 export type ToolCallOutcome = CallToolResult | InputRequiredResult;
 
@@ -56,6 +58,8 @@ export interface ToolCallContext {
   mrtrFindings?: SecurityFinding[];
   /** Upstream header names forwarded from the downstream request (gateway mode). Names only. */
   forwardedHeaders?: string[];
+  /** Who acted for whom, when the upstream has `delegation` configured and a token was carried. */
+  delegation?: AuditDelegationRecord;
 
   // --- Annotations populated by interceptors for downstream observers (e.g. audit) ---
 
@@ -76,7 +80,8 @@ export interface ToolCallContext {
     | "blocked_identity"
     | "blocked_dataflow"
     | "blocked_input_required"
-    | "blocked_request_state";
+    | "blocked_request_state"
+    | "blocked_delegation";
 }
 
 /** Continuation that invokes the next interceptor (or the upstream call). */

@@ -25,7 +25,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import type { Tool } from "@modelcontextprotocol/server";
 
 import type { ReconnectConfig, ServerConfig } from "../config/index.js";
-import { MissingForwardedHeaderError, UpstreamDisconnectedError } from "../errors.js";
+import {
+  DelegationBlockedError,
+  MissingForwardedHeaderError,
+  UpstreamDisconnectedError,
+} from "../errors.js";
 import {
   checkCachePolicy,
   checkTransportSecurity,
@@ -122,14 +126,19 @@ export class UpstreamConnection {
    * @param config       Transport/launch configuration for the upstream.
    * @param reconnectCfg Reconnect policy applied on unexpected disconnects.
    * @param onChange     Invoked whenever availability or the tool set changes.
-   * @param policy       Cache-hint policy (`maxCacheTtlMs`) applied to upstream list results.
+   * @param policy       Cache-hint policy (`maxCacheTtlMs`) applied to upstream list results, and
+   *                     `delegationBlock`: the delegation rules that block this upstream in the
+   *                     current request (the fetch backstop refuses to send while any do).
    */
   constructor(
     public readonly name: string,
     private readonly config: ServerConfig,
     private readonly reconnectCfg: ReconnectConfig,
     private readonly onChange: UpstreamChangeListener = () => {},
-    private readonly policy: { maxCacheTtlMs?: number } = {},
+    private readonly policy: {
+      maxCacheTtlMs?: number;
+      delegationBlock?: () => readonly string[];
+    } = {},
   ) {
     const http = config.transport === "http" ? config : undefined;
     this.forward = Object.entries(http?.forwardHeaders ?? {}).map(([upstream, incoming]) => ({
@@ -247,6 +256,12 @@ export class UpstreamConnection {
     // Backstop for every path (connect, list, call, ping): nothing is sent without the identity.
     if (missing.length > 0) {
       return Promise.reject(new MissingForwardedHeaderError(this.name, missing));
+    }
+    // ...and no delegate token is sent whose request verdict blocks this upstream (covers SSE GET and
+    // reconnects made inside the request, which skip the manager's pre-flight check).
+    const blocking = this.policy.delegationBlock?.() ?? [];
+    if (blocking.length > 0) {
+      return Promise.reject(new DelegationBlockedError(this.name, blocking));
     }
     return fetch(url, { ...init, headers });
   };

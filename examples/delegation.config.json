@@ -1,0 +1,55 @@
+{
+  "servers": {
+    "pfqa": {
+      "transport": "http",
+      "url": "http://localhost:8011/mcp",
+      "protocol": "legacy",
+      "connect": "onDemand",
+      "forwardHeaders": { "x-cso-identity": "x-cso-delegate-pfqa" },
+      "delegation": {
+        "audience": "pfqa",
+        "maxLifetimeSeconds": 120,
+        "allowedActors": ["master-quote-agent"],
+        "maxChainDepth": 2
+      }
+    },
+    "psqa": {
+      "transport": "http",
+      "url": "http://localhost:8012/mcp",
+      "protocol": "legacy",
+      "connect": "onDemand",
+      "forwardHeaders": { "x-cso-identity": "x-cso-delegate-psqa" },
+      "delegation": {
+        "audience": "psqa",
+        "maxLifetimeSeconds": 120,
+        "allowedActors": ["master-quote-agent"],
+        "maxChainDepth": 2
+      }
+    },
+    "pkqa": {
+      "transport": "http",
+      "url": "http://localhost:8013/mcp",
+      "protocol": "legacy",
+      "connect": "onDemand",
+      "forwardHeaders": { "x-cso-identity": "x-cso-delegate-pkqa" },
+      "delegation": {
+        "audience": "pkqa",
+        "maxLifetimeSeconds": 120,
+        "allowedActors": ["master-quote-agent"],
+        "maxChainDepth": 2
+      }
+    }
+  },
+  "delegation": {
+    "gatewayAudiences": ["mcp-bastion"],
+    "oneUserPerRequest": true,
+    "recordSubject": "hash"
+  },
+  "listen": { "mode": "http", "host": "127.0.0.1", "port": 3000, "path": "/mcp" },
+  "audit": {
+    "enabled": true,
+    "includeArgs": "redacted",
+    "tamperEvident": true,
+    "sinks": [{ "type": "file", "path": "./bastion-audit.jsonl" }]
+  }
+}

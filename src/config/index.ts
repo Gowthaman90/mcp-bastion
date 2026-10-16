@@ -16,6 +16,8 @@ export {
   AuditConfigSchema,
   SinkConfigSchema,
   ListenConfigSchema,
+  DelegationConfigSchema,
+  DelegationServerConfigSchema,
 } from "./schema.js";
 export type {
   BastionConfig,
@@ -29,4 +31,6 @@ export type {
   AuditConfig,
   SinkConfig,
   ListenConfig,
+  DelegationConfig,
+  DelegationServerConfig,
 } from "./schema.js";

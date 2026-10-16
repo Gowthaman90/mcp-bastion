@@ -11,10 +11,17 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import type { DelegationVerdict } from "./delegation-gate.js";
+
 /** What one downstream request carries for forwarding. */
 export interface RequestContext {
   /** Incoming header name (lower-case) → value. Only headers some upstream forwards are kept. */
   readonly headers: ReadonlyMap<string, string>;
+  /**
+   * The request's delegation verdict, computed once on first need and reused by every check in the
+   * same request (`tools/call`, `tools/list`, the fetch backstop).
+   */
+  delegation?: DelegationVerdict;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

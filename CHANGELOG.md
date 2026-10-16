@@ -33,6 +33,40 @@ that must each run as the signed-in user.
   `currentRequestContext`, `runOutsideRequest` and `isAuthFailure`. `ConnectionState` gains `idle`.
 - No change for existing configs: `connect` defaults to `startup` and nothing is forwarded unless listed.
 
+Keyless delegation checks (structural mode): Bastion checks each agent-to-sub-agent delegate JWT a
+request carries and records who acted for whom, while holding no secret or key.
+
+- **`servers.<name>.delegation`** (HTTP upstreams with `forwardHeaders`): `audience` (required), `header`
+  (a `forwardHeaders` key; default the only one), `verify` (`structural`; `signature` is reserved and
+  rejected as not yet supported), `maxLifetimeSeconds` (3600), `clockSkewSeconds` (30), `allowedActors`,
+  `requireActor`, `maxChainDepth`. Top-level **`delegation`**: `gatewayAudiences`, `oneUserPerRequest`
+  (true), `recordSubject` (`hash` | `plain`, default `hash`), `subjectKey`. Config load rejects a
+  `delegation` without `forwardHeaders`, a `header` that is not a `forwardHeaders` key, two upstreams with
+  the same audience, an upstream audience listed as a gateway audience, and unknown keys.
+- Rules: `delegation-malformed` (strict JWS compact decoding: canonical base64url, no padding, JSON
+  objects with unique member names; fails closed), `-audience-mismatch`, `-passthrough` (no `aud`, or a
+  gateway audience), `-subject-mixing` (more than one (`iss`, `sub`) across the request's tokens),
+  `-expired`, `-not-yet-valid`, `-lifetime-excess` (or no `exp`), `-actor-not-allowed` (current actor =
+  `act.sub`, else `act.client_id`), `-actor-required`, and the medium, warn-by-default `-chain-depth` and
+  `-chain-cycle` (prior actors are informational, RFC 8693 §4.1).
+- **`security.onDelegation`** and **`security.onDelegationChain`** (`block` | `warn`), defaulting from the
+  enforcement profile: `observe` warn/warn, `balanced` block/warn, `strict` block/block.
+- One verdict per request, cached in the request context. A blocked `tools/call` is refused before any
+  upstream contact (including an on-demand connect) with a tool error naming the rule, and audited with
+  the new decision **`blocked_delegation`** (`AuditEngine.recordPreflight`); `tools/list` omits a blocked
+  upstream; the forwarding `fetch` refuses to send a token whose verdict blocks.
+- Audit events gain an optional **`delegation`** record: subject (`hmac:` + 16 hex of HMAC-SHA256 over
+  `iss|sub`, or `sub` in `plain` mode), issuer, audience, `jti`, expiry, actors, chain depth,
+  `verified: "structural"` and findings. Never the token. The pseudonym key falls back from `subjectKey`
+  to `MCP_BASTION_SUBJECT_KEY`, the audit integrity key, then a random per-process key (not linkable
+  across restarts).
+- `bastion__status` gains `delegation: { mode, audience, lastViolation }` per configured upstream (rule
+  id and time only).
+- New public exports: `checkDelegation`, `decodeJwsCompact`, `subjectPseudonym`,
+  `DelegationBlockedError`, and the delegation types.
+- Limits: structural mode authenticates nothing (the upstream remains the verifier); the one-user check
+  covers only tokens configured with `delegation`; replay within a token's lifetime is not stopped.
+
 ## [1.1.0] - 2026-09-30
 
 Human-oversight gaps (the EU AI Act Art. 14 set in mcp-defense-bench v0.8.0: three of its seven vectors

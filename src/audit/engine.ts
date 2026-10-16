@@ -64,6 +64,14 @@ export class AuditEngine {
     };
   }
 
+  /**
+   * Record a call that was refused before the pipeline ran (e.g. a blocking delegation check, which
+   * must stop the call before any upstream contact). `ctx.securityDecision` names the decision.
+   */
+  recordPreflight(ctx: ToolCallContext): void {
+    this.record(ctx, randomUUID(), 0, undefined, false);
+  }
+
   /** Durable, monotonic compliance report (backs `bastion__compliance`). */
   complianceReport(): ComplianceReport {
     return {
@@ -122,6 +130,7 @@ export class AuditEngine {
       frameworks: frameworksFor(decision, ctx.findings ?? []),
       args: prepareArgs(ctx.args, this.config.includeArgs, this.config.redactKeys),
       ...(ctx.forwardedHeaders?.length ? { forwardedHeaders: [...ctx.forwardedHeaders] } : {}),
+      ...(ctx.delegation ? { delegation: ctx.delegation } : {}),
     };
 
     let event: AuditEvent = core;

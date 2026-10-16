@@ -20,3 +20,5 @@ export {
 export type { RequestContext } from "./request-context.js";
 export type { UpstreamChangeListener } from "./upstream-connection.js";
 export { UpstreamManager } from "./upstream-manager.js";
+export { DelegationGate } from "./delegation-gate.js";
+export type { DelegationCheck, DelegationStatus, DelegationVerdict } from "./delegation-gate.js";

@@ -51,6 +51,11 @@ export function frameworksFor(
     owasp.add("LLM06: Excessive Agency");
   }
 
+  if (decision === "blocked_delegation") {
+    nist.add("MANAGE");
+    owasp.add("LLM06: Excessive Agency");
+  }
+
   return { nistAiRmf: [...nist], owaspLlm: [...owasp] };
 }
 

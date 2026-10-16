@@ -17,4 +17,5 @@ export type {
   AuditDecision,
   AuditOutcome,
   FrameworkMapping,
+  AuditDelegationRecord,
 } from "./types.js";

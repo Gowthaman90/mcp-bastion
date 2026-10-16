@@ -20,6 +20,8 @@ export type {
   NamespaceConfig,
   SecurityConfig,
   ListenConfig,
+  DelegationConfig,
+  DelegationServerConfig,
 } from "./config/index.js";
 
 // Core domain
@@ -75,8 +77,21 @@ export {
   DEFAULT_REQUEST_STATE_TTL_SECONDS,
   // v1.1: human-oversight gaps (false-error escalation; standing-grant check is inside checkInputRequests)
   checkErrorSteering,
+  // Keyless delegation checks (structural mode)
+  checkDelegation,
+  decodeJwsCompact,
+  subjectPseudonym,
 } from "./security/index.js";
 export type { OpenResult, SealOptions, OpenOptions, ToolCallOutcome } from "./security/index.js";
+export type {
+  CarriedHeaders,
+  DelegationFinding,
+  DelegationPolicy,
+  DelegationResult,
+  DelegationRule,
+  DelegationTokenInfo,
+  DelegationUpstreamPolicy,
+} from "./security/index.js";
 export type {
   HeaderBag,
   HeaderCheckContext,
@@ -108,6 +123,7 @@ export type {
   AuditOutcome,
   FrameworkMapping,
   ComplianceReport,
+  AuditDelegationRecord,
 } from "./audit/index.js";
 export type { AuditConfig, SinkConfig } from "./config/index.js";
 
@@ -117,6 +133,7 @@ export {
   ConfigError,
   UpstreamDisconnectedError,
   MissingForwardedHeaderError,
+  DelegationBlockedError,
 } from "./errors.js";
 
 // Observability

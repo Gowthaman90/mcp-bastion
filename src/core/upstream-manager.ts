@@ -19,7 +19,11 @@ import type { InputRequiredResult, Tool } from "@modelcontextprotocol/server";
 
 import { AuditEngine, createSinks, type ComplianceReport } from "../audit/index.js";
 import type { BastionConfig } from "../config/index.js";
-import { MissingForwardedHeaderError, UpstreamDisconnectedError } from "../errors.js";
+import {
+  DelegationBlockedError,
+  MissingForwardedHeaderError,
+  UpstreamDisconnectedError,
+} from "../errors.js";
 import { textResult } from "../internal/index.js";
 import { logger } from "../observability/index.js";
 import {
@@ -37,6 +41,7 @@ import type {
   ToolSecurityReport,
 } from "../security/index.js";
 import { ControlAction, controlToolName } from "./constants.js";
+import { DelegationGate } from "./delegation-gate.js";
 import type { ReconnectResult, ServerStatus, ToolRoute } from "./types.js";
 import { isAuthFailure, UpstreamConnection } from "./upstream-connection.js";
 
@@ -52,6 +57,8 @@ export class UpstreamManager {
   /** HMAC key sealing `requestState` envelopes (MCP 2026-07-28 MRTR custody). */
   private readonly requestStateKey: Uint8Array;
   private readonly requestStateTtlSeconds: number;
+  /** Keyless delegation checks (inactive unless some upstream configures `delegation`). */
+  private readonly delegation: DelegationGate;
 
   /**
    * @param config The validated Bastion configuration.
@@ -65,6 +72,7 @@ export class UpstreamManager {
       : generateRequestStateKey();
     this.requestStateTtlSeconds = config.security.requestStateTtlSeconds;
     this.security = new SecurityEngine(config.security, this.namespaceSeparator);
+    this.delegation = new DelegationGate(config);
 
     // Audit is placed FIRST so it records blocked calls (short-circuited by the
     // security interceptors) as well as allowed ones.
@@ -83,7 +91,10 @@ export class UpstreamManager {
           serverConfig,
           config.reconnect,
           () => this.toolsChangedListener(),
-          { maxCacheTtlMs: config.security.maxCacheTtlMs },
+          {
+            maxCacheTtlMs: config.security.maxCacheTtlMs,
+            delegationBlock: () => this.delegation.blockingRules(name),
+          },
         ),
       );
     }
@@ -154,6 +165,7 @@ export class UpstreamManager {
     await Promise.allSettled(
       [...this.upstreams.values()].map(async (upstream) => {
         if (upstream.missingForwardedHeaders().length > 0) return;
+        if (this.delegationBlocksList(upstream.name)) return;
         try {
           await upstream.prepareForRequest();
         } catch (err) {
@@ -177,6 +189,8 @@ export class UpstreamManager {
     const tools: Tool[] = [];
     for (const [name, upstream] of this.upstreams) {
       if (!upstream.isConnected()) continue;
+      // A connection shared with other users is still not this request's to list through.
+      if (this.delegation.blockingRules(name).length > 0) continue;
       for (const tool of upstream.lastKnownTools) {
         tools.push({ ...tool, name: this.prefixToolName(name, tool.name) });
       }
@@ -214,6 +228,10 @@ export class UpstreamManager {
         logger.warn({ tool: name, server: target.name, missing }, "call not forwarded");
         return textResult(message, true);
       }
+      // Delegation checks run before any upstream contact, so an on-demand connect never carries
+      // a token that fails them.
+      const refused = this.delegationPreflight(target.name, name, callArgs, principal);
+      if (refused) return refused;
       try {
         await target.prepareForRequest();
       } catch (err) {
@@ -231,6 +249,11 @@ export class UpstreamManager {
           `"${controlToolName(ControlAction.Status, this.separator)}" to see which servers and tools are available.`,
         true,
       );
+    }
+
+    if (route.server !== target?.name) {
+      const refused = this.delegationPreflight(route.server, name, callArgs, principal);
+      if (refused) return refused;
     }
 
     const upstream = this.upstreams.get(route.server);
@@ -282,6 +305,8 @@ export class UpstreamManager {
     };
     const forwarded = upstream.presentForwardedHeaders();
     if (forwarded.length > 0) ctx.forwardedHeaders = forwarded;
+    const delegated = this.delegation.check(route.server)?.record;
+    if (delegated) ctx.delegation = delegated;
     try {
       // Security interceptors run first; the terminal step is the real upstream call.
       const outcome = await runPipeline(
@@ -324,9 +349,59 @@ export class UpstreamManager {
     }
   }
 
+  /**
+   * Apply the delegation verdict to a `tools/call` of `server`, before any upstream contact. A block
+   * is audited (`blocked_delegation`) and answered with a tool error naming the rules, never a token
+   * or claim value. Returns `undefined` when the call may go ahead (warn-only findings are logged).
+   */
+  private delegationPreflight(
+    server: string,
+    name: string,
+    args: Record<string, unknown>,
+    principal: string,
+  ): ToolCallOutcome | undefined {
+    const check = this.delegation.check(server);
+    if (!check || check.findings.length === 0) return undefined;
+    const rules = [...new Set(check.findings.map((f) => f.rule))];
+    if (check.blocking.length === 0) {
+      logger.warn({ tool: name, server, rules }, "delegation findings (warn only)");
+      return undefined;
+    }
+    logger.warn({ tool: name, server, rules: check.blocking }, "call blocked by delegation checks");
+    const upstream = this.upstreams.get(server);
+    const prefix = server + this.separator;
+    this.audit?.recordPreflight({
+      server,
+      toolName: name.startsWith(prefix) ? name.slice(prefix.length) : name,
+      namespacedName: name,
+      args,
+      principal,
+      ...(upstream?.presentForwardedHeaders().length
+        ? { forwardedHeaders: upstream.presentForwardedHeaders() }
+        : {}),
+      ...(check.record ? { delegation: check.record } : {}),
+      securityDecision: "blocked_delegation",
+    });
+    return textResult(
+      `Blocked by mcp-bastion: the delegation token for "${server}" failed ` +
+        `${check.blocking.join(", ")}, so "${name}" was not forwarded.`,
+      true,
+    );
+  }
+
+  /** Whether the current request's delegation verdict blocks `server` from a `tools/list` (logged). */
+  private delegationBlocksList(server: string): boolean {
+    const rules = this.delegation.blockingRules(server);
+    if (rules.length === 0) return false;
+    this.delegation.check(server); // note the violation for status
+    logger.warn({ server, rules }, "upstream skipped in tools/list by delegation checks");
+    return true;
+  }
+
   /** The tool-result text for an upstream failure; a 401 is reported as an authentication failure. */
   private failureText(upstream: UpstreamConnection, tool: string, err: unknown): string {
     if (err instanceof MissingForwardedHeaderError) return err.message;
+    if (err instanceof DelegationBlockedError) return err.message;
     if (isAuthFailure(err)) {
       return (
         `${upstream.name}: authentication failed — the upstream answered HTTP 401 Unauthorized, so ` +
@@ -359,6 +434,9 @@ export class UpstreamManager {
       authenticated: upstream.isAuthenticated(),
       tools: upstream.lastKnownTools.length,
       lastError: upstream.lastError ?? null,
+      ...(this.delegation.covers(upstream.name)
+        ? { delegation: this.delegation.status(upstream.name) }
+        : {}),
     }));
   }
 

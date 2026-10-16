@@ -54,6 +54,23 @@ export type {
   RequestStateBinding,
   SealedPayload,
 } from "./request-state.js";
+export {
+  checkDelegation,
+  decodeJwsCompact,
+  hasDuplicateKeys,
+  subjectPseudonym,
+  DELEGATION_CHAIN_RULES,
+} from "./delegation.js";
+export type {
+  CarriedHeaders,
+  DecodedJws,
+  DelegationFinding,
+  DelegationPolicy,
+  DelegationResult,
+  DelegationRule,
+  DelegationTokenInfo,
+  DelegationUpstreamPolicy,
+} from "./delegation.js";
 export type { ToolCallOutcome } from "./types.js";
 export { ToolRegistry } from "./tool-registry.js";
 export type { ObserveOptions } from "./tool-registry.js";

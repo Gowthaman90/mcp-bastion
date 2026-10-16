@@ -49,6 +49,7 @@ your servers run unchanged, and removing Bastion is a one-line config revert.
 - [Configuration](#configuration)
 - [Transports](#transports)
 - [Per-user identity (gateway mode)](#per-user-identity-gateway-mode)
+- [Delegation checks](#delegation-checks)
 - [Runtime security](#runtime-security)
 - [Audit & compliance](#audit--compliance)
 - [Client setup](#client-setup)
@@ -187,47 +188,54 @@ only standard MCP calls:
 
 ## Configuration
 
-| Key                                       | Type                           | Default              | Description                                                                                                     |
-| ----------------------------------------- | ------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `servers`                                 | map                            | —                    | Upstream servers to proxy (required, at least one).                                                             |
-| `servers.<name>.command`                  | string                         | —                    | Executable to launch (e.g. `npx`, `node`).                                                                      |
-| `servers.<name>.args`                     | string[]                       | `[]`                 | Arguments to `command`.                                                                                         |
-| `servers.<name>.env`                      | map                            | —                    | Env overrides merged over the process env.                                                                      |
-| `servers.<name>.cwd`                      | string                         | —                    | Working directory for the spawned process.                                                                      |
-| `reconnect.auto`                          | boolean                        | `true`               | Auto-reconnect after an unexpected disconnect.                                                                  |
-| `reconnect.maxRetries`                    | number                         | `10`                 | Max attempts before giving up (`-1` = unlimited).                                                               |
-| `reconnect.initialBackoffMs`              | number                         | `500`                | Initial backoff, doubled each attempt.                                                                          |
-| `reconnect.maxBackoffMs`                  | number                         | `30000`              | Backoff ceiling.                                                                                                |
-| `healthCheck.enabled`                     | boolean                        | `true`               | Enable periodic liveness probing.                                                                               |
-| `healthCheck.intervalMs`                  | number                         | `30000`              | Interval between probes.                                                                                        |
-| `healthCheck.timeoutMs`                   | number                         | `5000`               | Per-probe timeout.                                                                                              |
-| `namespace.strategy`                      | `prefix` \| `passthrough`      | `prefix`             | How upstream tool names are exposed.                                                                            |
-| `namespace.separator`                     | string                         | `__`                 | Separator used by the `prefix` strategy.                                                                        |
-| `security.pinTools`                       | boolean                        | `true`               | Pin tool definitions and detect later changes.                                                                  |
-| `security.onRugPull`                      | `block` \| `warn`              | `block`              | Action when a pinned tool's definition changed.                                                                 |
-| `security.inspectDescriptions`            | boolean                        | `true`               | Run poisoning heuristics on tool descriptions.                                                                  |
-| `security.onPoisoning`                    | `block` \| `warn`              | `warn`               | Action on a high-severity poisoning finding.                                                                    |
-| `audit.enabled`                           | boolean                        | `false`              | Record an audit event for every tool call.                                                                      |
-| `audit.includeArgs`                       | `none`\|`redacted`\|`full`     | `none`               | How tool arguments are recorded.                                                                                |
-| `audit.tamperEvident`                     | boolean                        | `false`              | Hash-chain events so tampering is detectable.                                                                   |
-| `audit.sinks`                             | array                          | console              | Destinations: `console`, `file`, `webhook`, `otlp`.                                                             |
-| `servers.<name>.transport`                | `stdio` \| `http`              | `stdio`              | Local subprocess or remote endpoint.                                                                            |
-| `servers.<name>.url`                      | string                         | —                    | Remote MCP URL (required for `http`).                                                                           |
-| `servers.<name>.headers`                  | map                            | —                    | Headers for `http` upstreams (e.g. `Authorization`).                                                            |
-| `servers.<name>.forwardHeaders`           | map                            | —                    | `http` only. Upstream header ← incoming header, copied per request (gateway mode). Needs `listen.mode: "http"`. |
-| `servers.<name>.onMissingForwardedHeader` | `error` \| `omit`              | `error`              | When a request lacks a forwarded header: answer a tool error without calling the upstream, or call it without.  |
-| `servers.<name>.connect`                  | `startup` \| `onDemand`        | `startup`            | `onDemand`: connect on the first request that needs this upstream, with that request's forwarded headers.       |
-| `servers.<name>.authHeaders`              | string[]                       | —                    | Extra header names that count as authentication in `bastion__status` (`forwardHeaders` keys always count).      |
-| `listen.mode`                             | `stdio` \| `http`              | `stdio`              | Serve Bastion over stdio or Streamable HTTP.                                                                    |
-| `listen.host` / `listen.port`             | string / number                | `127.0.0.1` / `3000` | Bind address for `http` mode.                                                                                   |
-| `listen.validateRoutingHeaders`           | boolean                        | `true`               | Reject `Mcp-*` routing headers that disagree with the body (`-32020`, MCP 2026-07-28).                          |
-| `security.maxCacheTtlMs`                  | number (ms)                    | `3600000`            | Ceiling on upstream `ttlMs` cache hints forwarded downstream (MCP 2026-07-28).                                  |
-| `servers.<name>.protocol`                 | `auto`\|`legacy`\|`2026-07-28` | `auto`               | Era negotiation per upstream (probe 2026-07-28, fall back; or pin).                                             |
-| `listen.legacy`                           | `stateless` \| `reject`        | `stateless`          | Serve pre-2026-07-28 clients statelessly, or refuse them (`-32022`).                                            |
-| `security.inspectInputRequests`           | boolean                        | `true`               | Gate `input_required` rounds (credential phishing, model steering).                                             |
-| `security.onInputRequired`                | `block` \| `warn`              | `block`              | Action on a high-severity MRTR finding (`warn` strips the request).                                             |
-| `security.requestStateKey`                | string (≥16)                   | random per process   | HMAC key sealing `requestState` envelopes; or `MCP_BASTION_REQUEST_STATE_KEY`.                                  |
-| `security.requestStateTtlSeconds`         | number                         | `300`                | Lifetime of a sealed `requestState` envelope.                                                                   |
+| Key                                       | Type                           | Default              | Description                                                                                                                  |
+| ----------------------------------------- | ------------------------------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `servers`                                 | map                            | —                    | Upstream servers to proxy (required, at least one).                                                                          |
+| `servers.<name>.command`                  | string                         | —                    | Executable to launch (e.g. `npx`, `node`).                                                                                   |
+| `servers.<name>.args`                     | string[]                       | `[]`                 | Arguments to `command`.                                                                                                      |
+| `servers.<name>.env`                      | map                            | —                    | Env overrides merged over the process env.                                                                                   |
+| `servers.<name>.cwd`                      | string                         | —                    | Working directory for the spawned process.                                                                                   |
+| `reconnect.auto`                          | boolean                        | `true`               | Auto-reconnect after an unexpected disconnect.                                                                               |
+| `reconnect.maxRetries`                    | number                         | `10`                 | Max attempts before giving up (`-1` = unlimited).                                                                            |
+| `reconnect.initialBackoffMs`              | number                         | `500`                | Initial backoff, doubled each attempt.                                                                                       |
+| `reconnect.maxBackoffMs`                  | number                         | `30000`              | Backoff ceiling.                                                                                                             |
+| `healthCheck.enabled`                     | boolean                        | `true`               | Enable periodic liveness probing.                                                                                            |
+| `healthCheck.intervalMs`                  | number                         | `30000`              | Interval between probes.                                                                                                     |
+| `healthCheck.timeoutMs`                   | number                         | `5000`               | Per-probe timeout.                                                                                                           |
+| `namespace.strategy`                      | `prefix` \| `passthrough`      | `prefix`             | How upstream tool names are exposed.                                                                                         |
+| `namespace.separator`                     | string                         | `__`                 | Separator used by the `prefix` strategy.                                                                                     |
+| `security.pinTools`                       | boolean                        | `true`               | Pin tool definitions and detect later changes.                                                                               |
+| `security.onRugPull`                      | `block` \| `warn`              | `block`              | Action when a pinned tool's definition changed.                                                                              |
+| `security.inspectDescriptions`            | boolean                        | `true`               | Run poisoning heuristics on tool descriptions.                                                                               |
+| `security.onPoisoning`                    | `block` \| `warn`              | `warn`               | Action on a high-severity poisoning finding.                                                                                 |
+| `audit.enabled`                           | boolean                        | `false`              | Record an audit event for every tool call.                                                                                   |
+| `audit.includeArgs`                       | `none`\|`redacted`\|`full`     | `none`               | How tool arguments are recorded.                                                                                             |
+| `audit.tamperEvident`                     | boolean                        | `false`              | Hash-chain events so tampering is detectable.                                                                                |
+| `audit.sinks`                             | array                          | console              | Destinations: `console`, `file`, `webhook`, `otlp`.                                                                          |
+| `servers.<name>.transport`                | `stdio` \| `http`              | `stdio`              | Local subprocess or remote endpoint.                                                                                         |
+| `servers.<name>.url`                      | string                         | —                    | Remote MCP URL (required for `http`).                                                                                        |
+| `servers.<name>.headers`                  | map                            | —                    | Headers for `http` upstreams (e.g. `Authorization`).                                                                         |
+| `servers.<name>.forwardHeaders`           | map                            | —                    | `http` only. Upstream header ← incoming header, copied per request (gateway mode). Needs `listen.mode: "http"`.              |
+| `servers.<name>.onMissingForwardedHeader` | `error` \| `omit`              | `error`              | When a request lacks a forwarded header: answer a tool error without calling the upstream, or call it without.               |
+| `servers.<name>.connect`                  | `startup` \| `onDemand`        | `startup`            | `onDemand`: connect on the first request that needs this upstream, with that request's forwarded headers.                    |
+| `servers.<name>.authHeaders`              | string[]                       | —                    | Extra header names that count as authentication in `bastion__status` (`forwardHeaders` keys always count).                   |
+| `servers.<name>.delegation`               | object                         | —                    | `http` only, needs `forwardHeaders`. Keyless checks on the delegate JWT in a forwarded header ([below](#delegation-checks)). |
+| `delegation.gatewayAudiences`             | string[]                       | `[]`                 | Audiences that identify Bastion itself; a token for one of them (or with no `aud`) is passthrough.                           |
+| `delegation.oneUserPerRequest`            | boolean                        | `true`               | All delegate tokens in one request must name the same user (`iss` + `sub`).                                                  |
+| `delegation.recordSubject`                | `hash` \| `plain`              | `hash`               | Audit subject: HMAC pseudonym of `iss\|sub`, or `sub` as is.                                                                 |
+| `delegation.subjectKey`                   | string (≥16)                   | see below            | Pseudonym key; or `MCP_BASTION_SUBJECT_KEY`, then the audit integrity key, then random per process.                          |
+| `security.onDelegation`                   | `block` \| `warn`              | `block`              | Action on a delegation finding other than the chain rules.                                                                   |
+| `security.onDelegationChain`              | `block` \| `warn`              | `warn`               | Action on `delegation-chain-depth` / `-chain-cycle` (`block` under `strict`).                                                |
+| `listen.mode`                             | `stdio` \| `http`              | `stdio`              | Serve Bastion over stdio or Streamable HTTP.                                                                                 |
+| `listen.host` / `listen.port`             | string / number                | `127.0.0.1` / `3000` | Bind address for `http` mode.                                                                                                |
+| `listen.validateRoutingHeaders`           | boolean                        | `true`               | Reject `Mcp-*` routing headers that disagree with the body (`-32020`, MCP 2026-07-28).                                       |
+| `security.maxCacheTtlMs`                  | number (ms)                    | `3600000`            | Ceiling on upstream `ttlMs` cache hints forwarded downstream (MCP 2026-07-28).                                               |
+| `servers.<name>.protocol`                 | `auto`\|`legacy`\|`2026-07-28` | `auto`               | Era negotiation per upstream (probe 2026-07-28, fall back; or pin).                                                          |
+| `listen.legacy`                           | `stateless` \| `reject`        | `stateless`          | Serve pre-2026-07-28 clients statelessly, or refuse them (`-32022`).                                                         |
+| `security.inspectInputRequests`           | boolean                        | `true`               | Gate `input_required` rounds (credential phishing, model steering).                                                          |
+| `security.onInputRequired`                | `block` \| `warn`              | `block`              | Action on a high-severity MRTR finding (`warn` strips the request).                                                          |
+| `security.requestStateKey`                | string (≥16)                   | random per process   | HMAC key sealing `requestState` envelopes; or `MCP_BASTION_REQUEST_STATE_KEY`.                                               |
+| `security.requestStateTtlSeconds`         | number                         | `300`                | Lifetime of a sealed `requestState` envelope.                                                                                |
 
 ## Transports
 
@@ -306,6 +314,83 @@ the incoming `x-cso-delegate-pfqa` header onto the upstream request as `x-cso-id
 are rejected at config load. See
 [`examples/identity-forwarding.config.json`](examples/identity-forwarding.config.json) for three
 sub-agents behind one Bastion.
+
+## Delegation checks
+
+_Unreleased._ In gateway mode a caller (say, a master agent working for a signed-in user) sends one
+short-lived delegate JWT per sub-agent, each in its own header. Each sub-agent sees only its own token.
+Bastion sees the whole request, so it can check what none of them can, **without holding any secret or
+key**:
+
+```jsonc
+"servers": {
+  "pfqa": {
+    "transport": "http", "url": "http://localhost:8011/mcp", "protocol": "legacy", "connect": "onDemand",
+    "forwardHeaders": { "x-cso-identity": "x-cso-delegate-pfqa" },
+    "delegation": {
+      "audience": "pfqa",                 // required: what this upstream's tokens must carry in `aud`
+      "header": "x-cso-identity",         // forwardHeaders key carrying the JWT (default: the only one)
+      "verify": "structural",             // the only mode today
+      "maxLifetimeSeconds": 120,          // default 3600
+      "clockSkewSeconds": 30,             // default 30
+      "allowedActors": ["master-quote-agent"],
+      "requireActor": false,
+      "maxChainDepth": 2
+    }
+  }
+},
+"delegation": { "gatewayAudiences": ["mcp-bastion"], "oneUserPerRequest": true, "recordSubject": "hash" }
+```
+
+| Rule                                               | Fires when                                                                        | Default (`balanced`) |
+| -------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------- |
+| `delegation-malformed`                             | not a strict JWS compact token (see below), or a wrongly typed claim              | block                |
+| `delegation-audience-mismatch`                     | no `aud` value equals this upstream's `audience` (a sibling's token)              | block                |
+| `delegation-passthrough`                           | `aud` is absent, or any `aud` value is in `gatewayAudiences`                      | block                |
+| `delegation-subject-mixing`                        | the request's delegate tokens name more than one (`iss`, `sub`)                   | block                |
+| `delegation-expired` / `-not-yet-valid`            | `now > exp + skew` / `nbf > now + skew`                                           | block                |
+| `delegation-lifetime-excess`                       | `exp − iat > maxLifetimeSeconds`, or no `exp`                                     | block                |
+| `delegation-actor-not-allowed` / `-actor-required` | current actor (`act.sub`, else `act.client_id`) not in `allowedActors` / no `act` | block                |
+| `delegation-chain-depth` / `-chain-cycle`          | the `act` chain is longer than `maxChainDepth` / names an actor twice             | **warn**             |
+
+Chain depth and cycles concern prior actors, which RFC 8693 §4.1 calls informational, so they are
+medium severity and only warned on unless `security.onDelegationChain` (or the `strict` profile) says
+`block`. Everything else follows `security.onDelegation` (`warn` under `observe`).
+
+- **Strict decoding.** Exactly three base64url segments, no padding, canonical encoding, JSON objects
+  with unique member names (after escape decoding) and a string `alg`; an optional `Bearer ` prefix is
+  allowed. Anything else fails closed as `delegation-malformed`.
+- **One verdict per request.** On first need Bastion decodes every delegation-configured token the
+  request carries, runs the per-upstream checks and the cross-token subject check, and caches the
+  verdict for the rest of the request. The pure checker is exported as
+  `checkDelegation(policy, carriedHeaders, now)`.
+- **Before any upstream contact.** A blocked `tools/call` is refused before Bastion connects (on-demand
+  connects included), with a tool error naming the rule, never a token or claim value, and an audit event
+  with decision `blocked_delegation`. `tools/list` leaves out an upstream the request is blocked from. As a
+  backstop, the upstream transport refuses to send a token whose verdict blocks (reconnects and other
+  sends made inside the request).
+- **Who acted for whom.** Calls to a delegation-configured upstream carry an audit `delegation` record:
+  `subject`, `issuer`, `audience`, `tokenId` (`jti`), `expiresAt`, `actors` (current first), `chainDepth`,
+  `verified: "structural"` and the findings. Never the token. In `hash` mode the subject is `"hmac:"` + the
+  first 16 hex characters of HMAC-SHA256(key, `iss|sub`): an operator with the key can recompute it to find
+  one user's records. The key is `delegation.subjectKey`, else `MCP_BASTION_SUBJECT_KEY`, else the audit
+  integrity key, else a random key per process, whose pseudonyms do **not** link across restarts.
+- **Status.** `bastion__status` shows, per upstream, `delegation: { mode, audience, lastViolation }`, where
+  the last violation is a rule id and a time only.
+- **Config checks.** `delegation` needs `forwardHeaders`; `header` must be one of its keys; two upstreams
+  cannot share an `audience`, and no upstream audience may be a gateway audience; unknown keys are
+  rejected; `verify: "signature"` is rejected as not yet supported.
+
+**Honest limits.**
+
+- Structural mode **authenticates nothing**: a party that can forge tokens can forge consistent claims. It
+  stops misrouting, passthrough, user mixing, stale relay and chain abuse by honest-but-wrong or
+  prompt-injected callers. The upstream remains the verifier. Signature mode (asymmetric tokens verified
+  against a JWKS) is planned for authentication at the gateway.
+- The one-user-per-request check covers only tokens configured with `delegation`.
+- Replay inside the token's lifetime is not stopped (no `jti` cache yet; possible later, opt-in, bounded).
+
+See [`examples/delegation.config.json`](examples/delegation.config.json) for three sub-agents.
 
 ## Runtime security
 

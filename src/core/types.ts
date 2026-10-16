@@ -30,6 +30,15 @@ export interface ServerStatus {
   tools: number;
   /** Most recent error message, or `null` if none. Never contains a forwarded header value. */
   lastError: string | null;
+  /**
+   * Keyless delegation checks, when configured: the mode, the expected audience, and the last
+   * violation (rule id and time only, never a token or claim value).
+   */
+  delegation?: {
+    mode: "structural";
+    audience: string;
+    lastViolation: { rule: string; at: string } | null;
+  };
 }
 
 /** Outcome of a `bastion__reconnect` request. */
