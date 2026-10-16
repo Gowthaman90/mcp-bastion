@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { exportJWK, generateKeyPair, SignJWT, type CryptoKey, type JWK } from "jose";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
@@ -333,5 +334,145 @@ describe("delegation checks end to end (CLI)", () => {
         expect(output, sink).not.toContain(secret);
       }
     }
+  });
+});
+
+describe("signature mode in the gateway", () => {
+  async function setup() {
+    const trusted = await generateKeyPair("ES256", { extractable: true });
+    const attacker = await generateKeyPair("ES256", { extractable: true });
+    const jwk: JWK = { ...(await exportJWK(trusted.publicKey)), kid: "spire-1", alg: "ES256" };
+    let down = false;
+    const jwksHits: number[] = [];
+    const jwksServer: HttpServer = createServer((_req, res) => {
+      jwksHits.push(Date.now());
+      if (down) return void res.writeHead(503).end();
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ keys: [jwk] }));
+    });
+    await new Promise<void>((r) => jwksServer.listen(0, "127.0.0.1", r));
+    cleanups.push(() => new Promise((r) => jwksServer.close(r)));
+    const jwksUrl = `http://127.0.0.1:${(jwksServer.address() as { port: number }).port}/jwks`;
+
+    const pfqa = (await startIdentityHttpServer()) as UpstreamFixture;
+    cleanups.push(() => pfqa.close());
+    const dir = await mkdtemp(join(tmpdir(), "bastion-sig-"));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    const auditPath = join(dir, "audit.jsonl");
+    const mgr = new UpstreamManager(
+      BastionConfigSchema.parse({
+        servers: {
+          pfqa: {
+            transport: "http",
+            url: pfqa.url,
+            protocol: "legacy",
+            connect: "onDemand",
+            forwardHeaders: { "x-cso-identity": "x-cso-delegate-pfqa" },
+            delegation: {
+              audience: "pfqa",
+              verify: "signature",
+              issuer: ISSUER,
+              algorithms: ["ES256"],
+              jwksUrl,
+              maxLifetimeSeconds: 120,
+            },
+          },
+        },
+        listen: { mode: "http" },
+        delegation: { gatewayAudiences: ["mcp-bastion"], subjectKey: SUBJECT_KEY },
+        audit: { enabled: true, sinks: [{ type: "file", path: auditPath }] },
+        reconnect: { auto: false },
+        healthCheck: { enabled: false },
+      }),
+    );
+    let closed = false;
+    const closeMgr = async () => {
+      if (!closed) await mgr.closeAll();
+      closed = true;
+    };
+    cleanups.push(closeMgr);
+    const listener = await startHttpServer(mgr, { host: "127.0.0.1", port: 0, path: "/mcp" });
+    cleanups.push(() => listener.close());
+
+    const now = Math.floor(Date.now() / 1000);
+    const sign = (key: CryptoKey, sub = "user:priya") =>
+      new SignJWT({ sub, act: { sub: "master-quote-agent" } })
+        .setProtectedHeader({ alg: "ES256", kid: "spire-1", typ: "JWT" })
+        .setIssuer(ISSUER)
+        .setAudience("pfqa")
+        .setIssuedAt(now - 5)
+        .setExpirationTime(now + 100)
+        .sign(key);
+    const audit = async () => {
+      await closeMgr();
+      return (await readFile(auditPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l) as { decision: string; delegation?: Record<string, unknown> });
+    };
+    return {
+      pfqa,
+      mgr,
+      listener,
+      jwksHits,
+      setDown: (d: boolean) => (down = d),
+      sign,
+      trusted,
+      attacker,
+      audit,
+    };
+  }
+
+  it("passes a validly signed token through and blocks a forged one before any upstream request", async () => {
+    const g = await setup();
+    const forged = await g.sign(g.attacker.privateKey);
+    const bad = await client(g.listener.url, { "x-cso-delegate-pfqa": forged });
+    const blocked = await bad.callTool({ name: "pfqa__whoami", arguments: {} });
+    expect(textOf(blocked)).toBe(
+      'Blocked by mcp-bastion: the delegation token for "pfqa" failed ' +
+        'delegation-signature-invalid, so "pfqa__whoami" was not forwarded.',
+    );
+    expect((await bad.listTools()).tools.map((t) => t.name)).not.toContain("pfqa__whoami");
+    expect(g.pfqa.requests).toHaveLength(0);
+
+    const token = await g.sign(g.trusted.privateKey);
+    const good = await client(g.listener.url, { "x-cso-delegate-pfqa": token });
+    const ok = await good.callTool({ name: "pfqa__whoami", arguments: {} });
+    expect(ok.isError, textOf(ok)).toBeFalsy();
+    expect(textOf(ok)).toBe(`identity=${token} n=`);
+    expect(g.jwksHits).toHaveLength(1); // fetched once, cached across requests
+    expect(g.mgr.status()[0].delegation).toMatchObject({
+      mode: "signature",
+      audience: "pfqa",
+      lastViolation: { rule: "delegation-signature-invalid" },
+    });
+
+    const events = await g.audit();
+    expect(events.find((e) => e.decision === "blocked_delegation")?.delegation).toMatchObject({
+      verified: "failed",
+      findings: [{ rule: "delegation-signature-invalid", severity: "high" }],
+    });
+    expect(events.find((e) => e.decision === "allowed")?.delegation).toMatchObject({
+      verified: "signature",
+      subject: subjectPseudonym(SUBJECT_KEY, ISSUER, "user:priya"),
+      findings: [],
+    });
+    const text = JSON.stringify(events);
+    expect(text).not.toContain(token);
+    expect(text).not.toContain(forged);
+  });
+
+  it("fails closed when the key set is unreachable, and says so in status", async () => {
+    const g = await setup();
+    g.setDown(true);
+    const token = await g.sign(g.trusted.privateKey);
+    const c = await client(g.listener.url, { "x-cso-delegate-pfqa": token });
+    const res = await c.callTool({ name: "pfqa__whoami", arguments: {} });
+    expect(textOf(res)).toMatch(/failed delegation-key-unknown/);
+    expect(g.pfqa.requests).toHaveLength(0);
+    const status = g.mgr.status()[0];
+    expect(status.lastError).toMatch(/delegation key set unavailable/);
+    expect(status.lastError).not.toContain(token);
   });
 });

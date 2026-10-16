@@ -3,19 +3,22 @@
  *
  * The gate turns the configuration into a {@link DelegationPolicy}, computes one verdict per
  * downstream request on first need (cached in the request context, so `tools/call`, `tools/list`
- * and the fetch backstop agree), resolves which findings block under the enforcement settings, and
+ * and the fetch backstop agree; asynchronous when an upstream uses signature mode), resolves which findings block under the enforcement settings, and
  * builds the audit record. It also keeps, per upstream, the last violation for `bastion__status`
  * (rule id and time only).
  *
  * @packageDocumentation
  */
 import { randomBytes } from "node:crypto";
+import type { JSONWebKeySet } from "jose";
 
 import type { AuditDelegationRecord } from "../audit/types.js";
 import type { BastionConfig } from "../config/index.js";
 import {
   checkDelegation,
+  checkDelegationAsync,
   DELEGATION_CHAIN_RULES,
+  delegationKeySet,
   subjectPseudonym,
   type DelegationFinding,
   type DelegationPolicy,
@@ -44,7 +47,7 @@ export interface DelegationCheck {
 
 /** Per-upstream delegation summary for `bastion__status`. */
 export interface DelegationStatus {
-  mode: "structural";
+  mode: "structural" | "signature";
   audience: string;
   /** Most recent finding on this upstream: rule id and time only. */
   lastViolation: { rule: DelegationRule; at: string } | null;
@@ -53,6 +56,9 @@ export interface DelegationStatus {
 export class DelegationGate {
   private readonly policy: DelegationPolicy;
   private readonly audiences = new Map<string, string>();
+  private readonly modes = new Map<string, "structural" | "signature">();
+  /** Whether any upstream verifies signatures (the verdict is then computed asynchronously). */
+  private readonly async: boolean;
   private readonly onDelegation: "block" | "warn";
   private readonly onChain: "block" | "warn";
   private readonly recordSubject: "hash" | "plain";
@@ -79,9 +85,23 @@ export class DelegationGate {
         allowedActors: d.allowedActors,
         requireActor: d.requireActor,
         maxChainDepth: d.maxChainDepth,
+        ...(d.verify === "signature"
+          ? {
+              signature: {
+                issuer: d.issuer!,
+                algorithms: d.algorithms!,
+                // Built once per upstream, so a remote set's cache and cooldown span requests.
+                keys: delegationKeySet(
+                  d.jwks ? { jwks: d.jwks as JSONWebKeySet } : { jwksUrl: d.jwksUrl! },
+                ),
+              },
+            }
+          : {}),
       };
       this.audiences.set(name, d.audience);
+      this.modes.set(name, d.verify);
     }
+    this.async = [...this.modes.values()].includes("signature");
     this.policy = {
       upstreams,
       gatewayAudiences: config.delegation.gatewayAudiences,
@@ -110,15 +130,59 @@ export class DelegationGate {
   }
 
   /**
-   * The current request's verdict, computed once and cached in the request context. `undefined`
-   * outside a request (nothing is forwarded then) or when no upstream has delegation checks.
+   * Compute the current request's verdict once and cache it in the request context; concurrent
+   * callers in the same request share one computation. `undefined` outside a request (nothing is
+   * forwarded then) or when no upstream has delegation checks. Never rejects.
    */
-  verdict(now: number = Date.now() / 1000): DelegationVerdict | undefined {
+  async ensure(): Promise<DelegationVerdict | undefined> {
     if (!this.enabled) return undefined;
     const ctx = currentRequestContext();
     if (!ctx) return undefined;
     if (ctx.delegation) return ctx.delegation;
-    const result = checkDelegation(this.policy, ctx.headers, Math.floor(now));
+    if (!this.async) return this.verdict();
+    ctx.delegationPending ??= checkDelegationAsync(
+      this.policy,
+      ctx.headers,
+      Math.floor(Date.now() / 1000),
+    ).then((result) => (ctx.delegation = this.resolve(result)));
+    return ctx.delegationPending;
+  }
+
+  /**
+   * The current request's verdict if it is known now: computed on the spot in structural mode,
+   * `undefined` while a signature-mode verdict has not been awaited ({@link ensure}).
+   */
+  verdict(): DelegationVerdict | undefined {
+    if (!this.enabled) return undefined;
+    const ctx = currentRequestContext();
+    if (!ctx) return undefined;
+    if (ctx.delegation || this.async) return ctx.delegation;
+    ctx.delegation = this.resolve(
+      checkDelegation(this.policy, ctx.headers, Math.floor(Date.now() / 1000)),
+    );
+    return ctx.delegation;
+  }
+
+  /**
+   * Rules that block `server` in the current request (empty = go ahead). Fails closed: while a
+   * signature-mode verdict is still pending, a covered upstream reports `delegation-pending`.
+   */
+  blockingRules(server: string): string[] {
+    const verdict = this.verdict();
+    if (!verdict) {
+      return this.covers(server) && this.async && currentRequestContext()
+        ? ["delegation-pending"]
+        : [];
+    }
+    return verdict.blocked.get(server) ?? [];
+  }
+
+  /** An operational error behind a fail-closed finding for `server` (e.g. JWKS unreachable). */
+  errorFor(server: string): string | undefined {
+    return this.verdict()?.result.errors?.[server];
+  }
+
+  private resolve(result: DelegationResult): DelegationVerdict {
     const blocked = new Map<string, DelegationRule[]>();
     for (const server of this.audiences.keys()) {
       const rules = this.applicable(result, server)
@@ -126,13 +190,7 @@ export class DelegationGate {
         .map((f) => f.rule);
       if (rules.length > 0) blocked.set(server, [...new Set(rules)]);
     }
-    ctx.delegation = { result, blocked };
-    return ctx.delegation;
-  }
-
-  /** Rules that block `server` in the current request (empty = go ahead). Cheap after the first call. */
-  blockingRules(server: string): DelegationRule[] {
-    return this.verdict()?.blocked.get(server) ?? [];
+    return { result, blocked };
   }
 
   /**
@@ -160,7 +218,11 @@ export class DelegationGate {
   status(server: string): DelegationStatus | undefined {
     const audience = this.audiences.get(server);
     if (audience === undefined) return undefined;
-    return { mode: "structural", audience, lastViolation: this.lastViolation.get(server) ?? null };
+    return {
+      mode: this.modes.get(server)!,
+      audience,
+      lastViolation: this.lastViolation.get(server) ?? null,
+    };
   }
 
   /** Findings that apply to `server`: its own token's, plus the request-wide ones. */
@@ -193,7 +255,8 @@ export class DelegationGate {
       expiresAt: info?.expiresAt != null ? isoOrNull(info.expiresAt) : null,
       actors: info ? [...info.actors] : [],
       chainDepth: info?.actors.length ?? 0,
-      verified: "structural",
+      verified:
+        info?.verified ?? (this.modes.get(server) === "signature" ? "failed" : "structural"),
       findings: findings.map((f) => ({ rule: f.rule, severity: f.severity })),
     };
   }

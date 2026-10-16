@@ -56,6 +56,8 @@ export type {
 } from "./request-state.js";
 export {
   checkDelegation,
+  checkDelegationAsync,
+  delegationKeySet,
   decodeJwsCompact,
   hasDuplicateKeys,
   subjectPseudonym,
@@ -65,6 +67,9 @@ export type {
   CarriedHeaders,
   DecodedJws,
   DelegationFinding,
+  DelegationKeySet,
+  DelegationKeySource,
+  DelegationSignatureTrust,
   DelegationPolicy,
   DelegationResult,
   DelegationRule,

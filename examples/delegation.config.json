@@ -5,7 +5,9 @@
       "url": "http://localhost:8011/mcp",
       "protocol": "legacy",
       "connect": "onDemand",
-      "forwardHeaders": { "x-cso-identity": "x-cso-delegate-pfqa" },
+      "forwardHeaders": {
+        "x-cso-identity": "x-cso-delegate-pfqa"
+      },
       "delegation": {
         "audience": "pfqa",
         "maxLifetimeSeconds": 120,
@@ -18,7 +20,9 @@
       "url": "http://localhost:8012/mcp",
       "protocol": "legacy",
       "connect": "onDemand",
-      "forwardHeaders": { "x-cso-identity": "x-cso-delegate-psqa" },
+      "forwardHeaders": {
+        "x-cso-identity": "x-cso-delegate-psqa"
+      },
       "delegation": {
         "audience": "psqa",
         "maxLifetimeSeconds": 120,
@@ -27,13 +31,20 @@
       }
     },
     "pkqa": {
+      "_comment": "Signature mode: Bastion verifies this sub-agent's delegate tokens against the issuer's public keys (still keyless). Needs ES256/EdDSA tokens; HS256 tokens can only be checked structurally, as pfqa and psqa are. Use \"jwks\": { \"keys\": [...] } instead of jwksUrl to pin the public keys inline.",
       "transport": "http",
       "url": "http://localhost:8013/mcp",
       "protocol": "legacy",
       "connect": "onDemand",
-      "forwardHeaders": { "x-cso-identity": "x-cso-delegate-pkqa" },
+      "forwardHeaders": {
+        "x-cso-identity": "x-cso-delegate-pkqa"
+      },
       "delegation": {
         "audience": "pkqa",
+        "verify": "signature",
+        "issuer": "https://spire.example/identity",
+        "algorithms": ["ES256", "EdDSA"],
+        "jwksUrl": "https://spire.example/.well-known/jwks.json",
         "maxLifetimeSeconds": 120,
         "allowedActors": ["master-quote-agent"],
         "maxChainDepth": 2
@@ -45,11 +56,21 @@
     "oneUserPerRequest": true,
     "recordSubject": "hash"
   },
-  "listen": { "mode": "http", "host": "127.0.0.1", "port": 3000, "path": "/mcp" },
+  "listen": {
+    "mode": "http",
+    "host": "127.0.0.1",
+    "port": 3000,
+    "path": "/mcp"
+  },
   "audit": {
     "enabled": true,
     "includeArgs": "redacted",
     "tamperEvident": true,
-    "sinks": [{ "type": "file", "path": "./bastion-audit.jsonl" }]
+    "sinks": [
+      {
+        "type": "file",
+        "path": "./bastion-audit.jsonl"
+      }
+    ]
   }
 }

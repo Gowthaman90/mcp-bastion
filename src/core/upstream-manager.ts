@@ -93,7 +93,10 @@ export class UpstreamManager {
           () => this.toolsChangedListener(),
           {
             maxCacheTtlMs: config.security.maxCacheTtlMs,
-            delegationBlock: () => this.delegation.blockingRules(name),
+            delegationBlock: async () => {
+              await this.delegation.ensure();
+              return this.delegation.blockingRules(name);
+            },
           },
         ),
       );
@@ -162,6 +165,7 @@ export class UpstreamManager {
    * logged and recorded as the upstream's `lastError`; the list simply omits that upstream.
    */
   async prepareUpstreams(): Promise<void> {
+    await this.delegation.ensure();
     await Promise.allSettled(
       [...this.upstreams.values()].map(async (upstream) => {
         if (upstream.missingForwardedHeaders().length > 0) return;
@@ -230,6 +234,7 @@ export class UpstreamManager {
       }
       // Delegation checks run before any upstream contact, so an on-demand connect never carries
       // a token that fails them.
+      await this.delegation.ensure();
       const refused = this.delegationPreflight(target.name, name, callArgs, principal);
       if (refused) return refused;
       try {
@@ -252,6 +257,7 @@ export class UpstreamManager {
     }
 
     if (route.server !== target?.name) {
+      await this.delegation.ensure();
       const refused = this.delegationPreflight(route.server, name, callArgs, principal);
       if (refused) return refused;
     }
@@ -362,6 +368,10 @@ export class UpstreamManager {
   ): ToolCallOutcome | undefined {
     const check = this.delegation.check(server);
     if (!check || check.findings.length === 0) return undefined;
+    // A check that failed closed for an operational reason (key set unreachable) is also surfaced
+    // as the upstream's last error, so an operator can tell an outage from an attack.
+    const error = this.delegation.errorFor(server);
+    if (error) this.upstreams.get(server)?.noteFailure(new Error(error));
     const rules = [...new Set(check.findings.map((f) => f.rule))];
     if (check.blocking.length === 0) {
       logger.warn({ tool: name, server, rules }, "delegation findings (warn only)");
@@ -394,6 +404,8 @@ export class UpstreamManager {
     const rules = this.delegation.blockingRules(server);
     if (rules.length === 0) return false;
     this.delegation.check(server); // note the violation for status
+    const error = this.delegation.errorFor(server);
+    if (error) this.upstreams.get(server)?.noteFailure(new Error(error));
     logger.warn({ server, rules }, "upstream skipped in tools/list by delegation checks");
     return true;
   }

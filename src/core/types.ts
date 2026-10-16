@@ -35,7 +35,7 @@ export interface ServerStatus {
    * violation (rule id and time only, never a token or claim value).
    */
   delegation?: {
-    mode: "structural";
+    mode: "structural" | "signature";
     audience: string;
     lastViolation: { rule: string; at: string } | null;
   };

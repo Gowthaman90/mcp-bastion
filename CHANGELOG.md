@@ -33,13 +33,13 @@ that must each run as the signed-in user.
   `currentRequestContext`, `runOutsideRequest` and `isAuthFailure`. `ConnectionState` gains `idle`.
 - No change for existing configs: `connect` defaults to `startup` and nothing is forwarded unless listed.
 
-Keyless delegation checks (structural mode): Bastion checks each agent-to-sub-agent delegate JWT a
-request carries and records who acted for whom, while holding no secret or key.
+Keyless delegation checks (structural and signature mode): Bastion checks each agent-to-sub-agent
+delegate JWT a request carries and records who acted for whom, while holding no secret or key.
 
 - **`servers.<name>.delegation`** (HTTP upstreams with `forwardHeaders`): `audience` (required), `header`
-  (a `forwardHeaders` key; default the only one), `verify` (`structural`; `signature` is reserved and
-  rejected as not yet supported), `maxLifetimeSeconds` (3600), `clockSkewSeconds` (30), `allowedActors`,
-  `requireActor`, `maxChainDepth`. Top-level **`delegation`**: `gatewayAudiences`, `oneUserPerRequest`
+  (a `forwardHeaders` key; default the only one), `verify` (`structural` | `signature`),
+  `maxLifetimeSeconds` (3600), `clockSkewSeconds` (30), `allowedActors`, `requireActor`,
+  `maxChainDepth`. Top-level **`delegation`**: `gatewayAudiences`, `oneUserPerRequest`
   (true), `recordSubject` (`hash` | `plain`, default `hash`), `subjectKey`. Config load rejects a
   `delegation` without `forwardHeaders`, a `header` that is not a `forwardHeaders` key, two upstreams with
   the same audience, an upstream audience listed as a gateway audience, and unknown keys.
@@ -57,15 +57,27 @@ request carries and records who acted for whom, while holding no secret or key.
   upstream; the forwarding `fetch` refuses to send a token whose verdict blocks.
 - Audit events gain an optional **`delegation`** record: subject (`hmac:` + 16 hex of HMAC-SHA256 over
   `iss|sub`, or `sub` in `plain` mode), issuer, audience, `jti`, expiry, actors, chain depth,
-  `verified: "structural"` and findings. Never the token. The pseudonym key falls back from `subjectKey`
+  `verified` and findings. Never the token. The pseudonym key falls back from `subjectKey`
   to `MCP_BASTION_SUBJECT_KEY`, the audit integrity key, then a random per-process key (not linkable
   across restarts).
 - `bastion__status` gains `delegation: { mode, audience, lastViolation }` per configured upstream (rule
   id and time only).
-- New public exports: `checkDelegation`, `decodeJwsCompact`, `subjectPseudonym`,
-  `DelegationBlockedError`, and the delegation types.
-- Limits: structural mode authenticates nothing (the upstream remains the verifier); the one-user check
-  covers only tokens configured with `delegation`; replay within a token's lifetime is not stopped.
+- **Signature mode** (`verify: "signature"`): `issuer` (required), `algorithms` (required, non-empty;
+  `HS256/384/512` and `none` rejected in any casing; asymmetric only) and exactly one key source,
+  `jwksUrl` (HTTPS except loopback; `createRemoteJWKSet`) or inline public `jwks` (`createLocalJWKSet`;
+  private or secret JWK members rejected). Keys come only from that source (`jku`, `x5u`, `x5c`, embedded
+  `jwk` never followed); the case-sensitive allow-list runs before any key lookup; `crit` headers are
+  refused; an unknown `kid` triggers at most one refetch per 30 s cooldown; a JWKS fetch failure or 5 s
+  timeout fails closed and is reported as the upstream's `lastError`. New high, blocking rules:
+  `delegation-alg-disallowed`, `-key-unknown`, `-signature-invalid`, `-issuer-mismatch`. The structural
+  rules still run under the same names. The audit record's `verified` is `signature` when the signature
+  verified, `failed` when it did not. `jose` 6.2.3 (already in the tree via the MCP SDK) becomes a direct
+  dependency; no package is added.
+- New public exports: `checkDelegation`, `checkDelegationAsync`, `delegationKeySet`,
+  `decodeJwsCompact`, `subjectPseudonym`, `DelegationBlockedError`, and the delegation types.
+- Limits: structural mode authenticates nothing (the upstream remains the verifier); signature mode
+  holds public keys only and needs asymmetric tokens; the one-user check covers only tokens configured
+  with `delegation`; replay within a token's lifetime is not stopped.
 
 ## [1.1.0] - 2026-09-30
 

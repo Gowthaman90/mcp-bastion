@@ -8,9 +8,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BastionConfigSchema, SecurityConfigSchema } from "../src/config/index.js";
+import type { JSONWebKeySet } from "jose";
+
 import {
   checkDelegation,
+  checkDelegationAsync,
   decodeJwsCompact,
+  delegationKeySet,
   DELEGATION_CHAIN_RULES,
   hasDuplicateKeys,
   subjectPseudonym,
@@ -224,6 +228,7 @@ describe("checkDelegation: request handling and privacy", () => {
       tokenId: "t-1",
       expiresAt: NOW + 90,
       actors: ["master-quote-agent"],
+      verified: "structural",
     });
   });
 
@@ -334,9 +339,13 @@ describe("delegation configuration", () => {
     ).toMatch(/delegation.header is required/);
   });
 
-  it('rejects verify: "signature" as not yet supported', () => {
+  it('verify: "signature" needs issuer, algorithms and one key source', () => {
     const r = parse({ pfqa: http({ audience: "pfqa", verify: "signature" }) });
-    expect(messages(r).join()).toMatch(/not yet supported/);
+    expect(messages(r)).toEqual([
+      'verify "signature" needs issuer',
+      'verify "signature" needs a non-empty algorithms list',
+      'verify "signature" needs exactly one key source: jwksUrl or jwks',
+    ]);
   });
 
   it("rejects duplicate audiences across upstreams and an audience that is the gateway's", () => {
@@ -377,14 +386,16 @@ describe("delegation configuration", () => {
 
 // ---------------------------------------------------------------------------------------------
 // mcp-defense-bench pre-registered DEV fixtures (staging/delegation/dev only; the held-out set is
-// never read here). Structural fixtures only: signature-forgery fixtures need signature mode.
+// never read here). Signature-forgery fixtures run in signature mode with their inline public JWKS.
 // ---------------------------------------------------------------------------------------------
 
 interface DelegatedRequest {
   now: number;
   gateway: { audiences: string[] };
   upstreams: Record<string, { audience: string; incomingHeader: string }>;
-  trust: { mode: "structural" | "signature" };
+  trust:
+    | { mode: "structural" }
+    | { mode: "signature"; jwks: JSONWebKeySet; issuer: string; algorithms: string[] };
   policy: {
     maxLifetimeSeconds?: number;
     clockSkewSeconds?: number;
@@ -421,16 +432,33 @@ function loadDevFixtures(): DevFixture[] {
   return out;
 }
 
-/** Findings on the target upstream plus request-wide ones, as Bastion would apply them. */
-function evaluate(fx: DelegatedRequest) {
+/**
+ * Findings on the target upstream plus request-wide ones, as Bastion would apply them. This is the
+ * whole mapping a bench adapter needs: fixture upstreams + trust + policy → a DelegationPolicy.
+ */
+async function evaluate(fx: DelegatedRequest) {
+  const trust = fx.trust;
+  const signature =
+    trust.mode === "signature"
+      ? {
+          issuer: trust.issuer,
+          algorithms: trust.algorithms,
+          keys: delegationKeySet({ jwks: trust.jwks }),
+        }
+      : undefined;
   const upstreams: Record<string, DelegationUpstreamPolicy> = {};
   for (const [name, u] of Object.entries(fx.upstreams)) {
-    upstreams[name] = { incomingHeader: u.incomingHeader, audience: u.audience, ...fx.policy };
+    upstreams[name] = {
+      incomingHeader: u.incomingHeader,
+      audience: u.audience,
+      ...fx.policy,
+      ...(signature ? { signature } : {}),
+    };
   }
   const headers = Object.fromEntries(
     Object.entries(fx.request.headers).map(([k, v]) => [k.toLowerCase(), v]),
   );
-  const r = checkDelegation(
+  const r = await checkDelegationAsync(
     { upstreams, gatewayAudiences: fx.gateway.audiences, oneUserPerRequest: true },
     headers,
     fx.now,
@@ -440,20 +468,33 @@ function evaluate(fx: DelegatedRequest) {
 
 describe.skipIf(!existsSync(DEV_DIR))("mcp-defense-bench delegation dev fixtures", () => {
   const fixtures = existsSync(DEV_DIR) ? loadDevFixtures() : [];
-  const structural = fixtures.filter((f) => f.fixture.trust.mode === "structural");
+  const signed = fixtures.filter((f) => f.fixture.trust.mode === "signature");
 
-  it("has the pre-registered structural dev fixtures", () => {
-    expect(structural.length).toBeGreaterThanOrEqual(12);
+  it("has the pre-registered dev fixtures (12 structural, 3 signature)", () => {
+    expect(fixtures.length - signed.length).toBeGreaterThanOrEqual(12);
+    expect(signed.length).toBeGreaterThanOrEqual(3);
   });
 
-  for (const f of structural) {
-    it(`${f.id}: flags the attack, passes its benign control`, () => {
-      const findings = evaluate(f.fixture);
+  for (const f of fixtures) {
+    it(`${f.id}: flags the attack, passes its benign control`, async () => {
+      const findings = await evaluate(f.fixture);
       expect(findings.length, "attack detected").toBeGreaterThan(0);
       // Balanced profile: chain rules warn, everything else blocks.
       const blocks = findings.some((x) => !DELEGATION_CHAIN_RULES.has(x.rule));
       expect(blocks, "enforce matches expectation").toBe(f.expected.enforce);
-      expect(evaluate(f.benignControl), "benign control").toEqual([]);
+      if (f.fixture.trust.mode === "signature") {
+        const signatureRules = [
+          "delegation-signature-invalid",
+          "delegation-alg-disallowed",
+          "delegation-issuer-mismatch",
+          "delegation-key-unknown",
+        ];
+        expect(
+          findings.some((x) => signatureRules.includes(x.rule)),
+          "signature rule",
+        ).toBe(true);
+      }
+      expect(await evaluate(f.benignControl), "benign control").toEqual([]);
     });
   }
 });

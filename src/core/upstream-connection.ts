@@ -137,7 +137,7 @@ export class UpstreamConnection {
     private readonly onChange: UpstreamChangeListener = () => {},
     private readonly policy: {
       maxCacheTtlMs?: number;
-      delegationBlock?: () => readonly string[];
+      delegationBlock?: () => Promise<readonly string[]>;
     } = {},
   ) {
     const http = config.transport === "http" ? config : undefined;
@@ -243,7 +243,7 @@ export class UpstreamConnection {
    * time inside the async context of whichever downstream request caused the send, so it reads that
    * request's headers and no other. Outside a request only the static `headers` are sent.
    */
-  private readonly forwardingFetch: FetchLike = (url, init) => {
+  private readonly forwardingFetch: FetchLike = async (url, init) => {
     const ctx = currentRequestContext();
     if (!ctx) return fetch(url, init);
     const headers = new Headers(init?.headers);
@@ -254,15 +254,11 @@ export class UpstreamConnection {
       else if (this.onMissing === "error") missing.push(incoming);
     }
     // Backstop for every path (connect, list, call, ping): nothing is sent without the identity.
-    if (missing.length > 0) {
-      return Promise.reject(new MissingForwardedHeaderError(this.name, missing));
-    }
+    if (missing.length > 0) throw new MissingForwardedHeaderError(this.name, missing);
     // ...and no delegate token is sent whose request verdict blocks this upstream (covers SSE GET and
     // reconnects made inside the request, which skip the manager's pre-flight check).
-    const blocking = this.policy.delegationBlock?.() ?? [];
-    if (blocking.length > 0) {
-      return Promise.reject(new DelegationBlockedError(this.name, blocking));
-    }
+    const blocking = (await this.policy.delegationBlock?.()) ?? [];
+    if (blocking.length > 0) throw new DelegationBlockedError(this.name, blocking);
     return fetch(url, { ...init, headers });
   };
 

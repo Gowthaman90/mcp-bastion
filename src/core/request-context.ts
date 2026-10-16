@@ -22,6 +22,8 @@ export interface RequestContext {
    * same request (`tools/call`, `tools/list`, the fetch backstop).
    */
   delegation?: DelegationVerdict;
+  /** The verdict while it is being computed (signature mode verifies asynchronously). */
+  delegationPending?: Promise<DelegationVerdict>;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

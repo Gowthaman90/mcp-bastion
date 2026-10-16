@@ -9,14 +9,27 @@
  * validity window, and who is acting (RFC 8693 `act`).
  *
  * `structural` mode decodes the token strictly and checks its claims; it does **not** verify the
- * signature, so it authenticates nothing. The upstream remains the verifier.
+ * signature, so it authenticates nothing. The upstream remains the verifier. `signature` mode also
+ * verifies the signature against the issuer's **public** keys (a JWK set, inline or fetched), with
+ * a case-sensitive algorithm allow-list and an expected issuer: still keyless, since no secret is
+ * held.
  *
- * Everything here is pure and deterministic: {@link checkDelegation} takes the policy, the carried
- * headers and the clock, and returns findings. Findings name a rule, never a token or claim value.
+ * {@link checkDelegation} (structural only) is pure, synchronous and deterministic: it takes the
+ * policy, the carried headers and the clock, and returns findings. {@link checkDelegationAsync}
+ * runs the same checks plus signature verification. Findings name a rule, never a token or claim
+ * value.
  *
  * @packageDocumentation
  */
 import { createHmac } from "node:crypto";
+import {
+  compactVerify,
+  createLocalJWKSet,
+  createRemoteJWKSet,
+  type JSONWebKeySet,
+  type CryptoKey,
+  type JWSHeaderParameters,
+} from "jose";
 
 import type { Severity } from "./types.js";
 
@@ -32,7 +45,11 @@ export type DelegationRule =
   | "delegation-actor-not-allowed"
   | "delegation-actor-required"
   | "delegation-chain-depth"
-  | "delegation-chain-cycle";
+  | "delegation-chain-cycle"
+  | "delegation-signature-invalid"
+  | "delegation-alg-disallowed"
+  | "delegation-issuer-mismatch"
+  | "delegation-key-unknown";
 
 /** Rules about prior actors: informational per RFC 8693 §4.1, so governed by `onDelegationChain`. */
 export const DELEGATION_CHAIN_RULES: ReadonlySet<DelegationRule> = new Set([
@@ -63,6 +80,21 @@ export interface DelegationUpstreamPolicy {
   requireActor?: boolean;
   /** Longest accepted actor chain (current + prior actors). Unset = no limit. */
   maxChainDepth?: number;
+  /** Signature mode: verify the token against these public keys. Unset = structural mode. */
+  signature?: DelegationSignatureTrust;
+}
+
+/** Resolves the verification key for a token's protected header (see {@link delegationKeySet}). */
+export type DelegationKeySet = ReturnType<typeof createLocalJWKSet>;
+
+/** What signature mode trusts for one upstream. Public keys only. */
+export interface DelegationSignatureTrust {
+  /** The expected `iss` (exact). */
+  issuer: string;
+  /** Accepted `alg` values (case-sensitive). `none` and HMAC must never be listed. */
+  algorithms: readonly string[];
+  /** The issuer's public keys. */
+  keys: DelegationKeySet;
 }
 
 /** The request-wide policy {@link checkDelegation} applies. */
@@ -84,6 +116,11 @@ export interface DelegationTokenInfo {
   expiresAt: number | null;
   /** Current actor first, then prior actors (outermost to innermost). */
   actors: string[];
+  /**
+   * `structural`: claims checked, signature not verified. `signature`: the signature verified under
+   * a trusted key. `failed`: signature mode, and it did not verify.
+   */
+  verified: "structural" | "signature" | "failed";
 }
 
 /** The result of {@link checkDelegation}. */
@@ -94,6 +131,11 @@ export interface DelegationResult {
   request: DelegationFinding[];
   /** Upstream name → claims of its token, when the token decoded. Never logged as is. */
   tokens: Record<string, DelegationTokenInfo>;
+  /**
+   * Upstream name → an operational error that made a check fail closed (e.g. the key set could not
+   * be fetched). Safe to log: never contains a token.
+   */
+  errors?: Record<string, string>;
 }
 
 /** Header lookups accept a plain record or the request context's map; names are lower-case. */
@@ -281,6 +323,7 @@ function checkToken(
     tokenId: (c.jti as string | undefined) ?? null,
     expiresAt: (c.exp as number | undefined) ?? null,
     actors: chain.actors,
+    verified: "structural",
   };
 
   // Audience: passthrough (for the gateway itself, or for nobody) first, else lateral misroute.
@@ -340,41 +383,197 @@ function checkToken(
   return { findings, info };
 }
 
-/**
- * Check every delegate token a request carries against the policy.
- *
- * @param policy  Per-upstream policy plus request-wide settings.
- * @param headers The request's carried headers (incoming name, lower-case → value).
- * @param now     The clock, in seconds since the epoch (a JWT NumericDate).
- * @returns Findings per upstream (only for upstreams whose token is present), findings across the
- *          request (subject mixing over (`iss`, `sub`)), and the decoded claims for the audit record.
- */
-export function checkDelegation(
+/** The structural pass over every carried token; signature mode adds to its result. */
+function structuralPass(
   policy: DelegationPolicy,
   headers: CarriedHeaders,
   now: number,
-): DelegationResult {
+): { result: DelegationResult; values: Record<string, string> } {
   const result: DelegationResult = { perUpstream: {}, request: [], tokens: {} };
+  const values: Record<string, string> = {};
   const gatewayAudiences = policy.gatewayAudiences ?? [];
-  const subjects = new Set<string>();
-
   for (const [server, upstream] of Object.entries(policy.upstreams)) {
     const value = headerValue(headers, upstream.incomingHeader);
     if (value === undefined || value === "") continue;
+    values[server] = value;
     const { findings, info } = checkToken(value, upstream, gatewayAudiences, now);
     result.perUpstream[server] = findings;
-    if (info) {
-      result.tokens[server] = info;
-      subjects.add(JSON.stringify([info.issuer, info.subject]));
-    }
+    if (info) result.tokens[server] = info;
   }
+  return { result, values };
+}
 
+/** Subject mixing over the decodable tokens' (`iss`, `sub`) pairs. */
+function addSubjectMixing(policy: DelegationPolicy, result: DelegationResult): DelegationResult {
+  const subjects = new Set(
+    Object.values(result.tokens).map((t) => JSON.stringify([t.issuer, t.subject])),
+  );
   if ((policy.oneUserPerRequest ?? true) && subjects.size > 1) {
     result.request.push(
       finding("delegation-subject-mixing", "delegate tokens in this request name different users"),
     );
   }
   return result;
+}
+
+/**
+ * Check every delegate token a request carries against the policy (structural mode only).
+ *
+ * @param policy  Per-upstream policy plus request-wide settings. No upstream may use `signature`
+ *                trust here (that needs {@link checkDelegationAsync}); one that does is an error.
+ * @param headers The request's carried headers (incoming name, lower-case → value).
+ * @param now     The clock, in seconds since the epoch (a JWT NumericDate).
+ * @returns Findings per upstream (only for upstreams whose token is present), findings across the
+ *          request (subject mixing over (`iss`, `sub`)), and the decoded claims for the audit record.
+ * @throws When an upstream has `signature` trust, rather than silently skipping verification.
+ */
+export function checkDelegation(
+  policy: DelegationPolicy,
+  headers: CarriedHeaders,
+  now: number,
+): DelegationResult {
+  for (const [server, upstream] of Object.entries(policy.upstreams)) {
+    if (upstream.signature) {
+      throw new Error(
+        `delegation upstream "${server}" uses signature trust: call checkDelegationAsync instead`,
+      );
+    }
+  }
+  return addSubjectMixing(policy, structuralPass(policy, headers, now).result);
+}
+
+/**
+ * {@link checkDelegation} plus signature verification for every upstream with `signature` trust.
+ * Structural rules (audience, passthrough, validity, actor, chain) still run on every token, so rule
+ * names do not depend on the mode. Never rejects: a key-set failure fails closed as a finding.
+ */
+export async function checkDelegationAsync(
+  policy: DelegationPolicy,
+  headers: CarriedHeaders,
+  now: number,
+): Promise<DelegationResult> {
+  const { result, values } = structuralPass(policy, headers, now);
+  await Promise.all(
+    Object.entries(values).map(async ([server, value]) => {
+      const trust = policy.upstreams[server].signature;
+      if (!trust) return;
+      const info = result.tokens[server];
+      if (!info) return; // malformed: already reported, nothing to verify
+      const outcome = await verifySignature(value, trust);
+      const findings: DelegationFinding[] = [...outcome.findings];
+      if (info.issuer !== trust.issuer) {
+        findings.push(finding("delegation-issuer-mismatch", "token issuer is not the trusted one"));
+      }
+      info.verified = outcome.findings.length === 0 ? "signature" : "failed";
+      result.perUpstream[server] = [...findings, ...result.perUpstream[server]];
+      if (outcome.error !== undefined) (result.errors ??= {})[server] = outcome.error;
+    }),
+  );
+  return addSubjectMixing(policy, result);
+}
+
+// --------------------------------------------------------------------------------------------
+// Signature mode
+// --------------------------------------------------------------------------------------------
+
+/** Error codes jose uses when the key set has no single key for a token. */
+const NO_KEY = "ERR_JWKS_NO_MATCHING_KEY";
+const SEVERAL_KEYS = "ERR_JWKS_MULTIPLE_MATCHING_KEYS";
+const errorCode = (e: unknown) => (e as { code?: unknown } | null)?.code;
+
+/**
+ * Verify one token's signature. Keys come only from `trust.keys`: header parameters that point at
+ * other keys (`jku`, `x5u`, `jwk`, `x5c`) are never followed. The algorithm allow-list is checked
+ * (case-sensitively) before any key is looked up, so `alg: none` or HMAC never triggers a fetch.
+ */
+async function verifySignature(
+  value: string,
+  trust: DelegationSignatureTrust,
+): Promise<{ findings: DelegationFinding[]; error?: string }> {
+  const token = /^bearer /i.test(value) ? value.slice(7) : value;
+  const header = decodeJwsCompact(token)!.header as JWSHeaderParameters;
+  if (!trust.algorithms.includes(header.alg as string)) {
+    return { findings: [finding("delegation-alg-disallowed", "token algorithm is not allowed")] };
+  }
+  // Critical extensions (e.g. an unencoded `b64: false` payload) change what is signed: refuse.
+  if (header.crit !== undefined) {
+    return { findings: [finding("delegation-signature-invalid", "unsupported critical header")] };
+  }
+  const algorithms = [...trust.algorithms];
+  let keyError: unknown;
+  const getKey: DelegationKeySet = async (h, t) => {
+    try {
+      return await trust.keys(h, t);
+    } catch (err) {
+      keyError = err;
+      throw err;
+    }
+  };
+  try {
+    await compactVerify(token, getKey, { algorithms });
+    return { findings: [] };
+  } catch (err) {
+    if (keyError === undefined) {
+      return errorCode(err) === "ERR_JOSE_ALG_NOT_ALLOWED"
+        ? { findings: [finding("delegation-alg-disallowed", "token algorithm is not allowed")] }
+        : { findings: [finding("delegation-signature-invalid", "signature does not verify")] };
+    }
+  }
+  // Several keys match (no `kid`, or a shared one): the token verifies if any of them verifies it.
+  if (errorCode(keyError) === SEVERAL_KEYS) {
+    const candidates = keyError as AsyncIterable<CryptoKey>;
+    for await (const key of candidates) {
+      try {
+        await compactVerify(token, key, { algorithms });
+        return { findings: [] };
+      } catch {
+        // try the next candidate
+      }
+    }
+    return { findings: [finding("delegation-signature-invalid", "signature does not verify")] };
+  }
+  if (errorCode(keyError) === NO_KEY) {
+    return { findings: [finding("delegation-key-unknown", "no trusted key matches the token")] };
+  }
+  const reason = (keyError as Error)?.message ?? String(keyError);
+  return {
+    findings: [finding("delegation-key-unknown", "trusted key set is unavailable")],
+    error: `delegation key set unavailable: ${reason}`,
+  };
+}
+
+/** Where signature mode gets the issuer's public keys. */
+export type DelegationKeySource =
+  { jwks: JSONWebKeySet } | { jwksUrl: string; timeoutMs?: number; cooldownMs?: number };
+
+/**
+ * Build the key resolver for signature mode. An inline set is used as is. A remote set is fetched
+ * on first use and cached; a token with an unknown `kid` triggers at most one refetch per cooldown
+ * (default 30 s), and after a failed fetch the set fails fast (closed) until the cooldown passes,
+ * so a JWKS outage cannot be turned into a fetch storm. The fetch never carries a forwarded header.
+ */
+export function delegationKeySet(source: DelegationKeySource): DelegationKeySet {
+  if ("jwks" in source) return createLocalJWKSet(source.jwks);
+  const cooldownMs = source.cooldownMs ?? 30_000;
+  const remote = createRemoteJWKSet(new URL(source.jwksUrl), {
+    timeoutDuration: source.timeoutMs ?? 5_000,
+    cooldownDuration: cooldownMs,
+  });
+  let failedAt = -Infinity;
+  let lastFailure: unknown;
+  return async (header, token) => {
+    if (Date.now() - failedAt < cooldownMs) throw lastFailure;
+    try {
+      return await remote(header, token);
+    } catch (err) {
+      const code = errorCode(err);
+      if (code !== NO_KEY && code !== SEVERAL_KEYS) {
+        failedAt = Date.now();
+        lastFailure = err;
+      }
+      throw err;
+    }
+  };
 }
 
 /**

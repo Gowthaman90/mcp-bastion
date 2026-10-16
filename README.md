@@ -220,6 +220,7 @@ only standard MCP calls:
 | `servers.<name>.connect`                  | `startup` \| `onDemand`        | `startup`            | `onDemand`: connect on the first request that needs this upstream, with that request's forwarded headers.                    |
 | `servers.<name>.authHeaders`              | string[]                       | —                    | Extra header names that count as authentication in `bastion__status` (`forwardHeaders` keys always count).                   |
 | `servers.<name>.delegation`               | object                         | —                    | `http` only, needs `forwardHeaders`. Keyless checks on the delegate JWT in a forwarded header ([below](#delegation-checks)). |
+| `servers.<name>.delegation.verify`        | `structural` \| `signature`    | `structural`         | `signature` also verifies the JWT against public keys (`jwksUrl` or `jwks`), with `issuer` and an `algorithms` allow-list.   |
 | `delegation.gatewayAudiences`             | string[]                       | `[]`                 | Audiences that identify Bastion itself; a token for one of them (or with no `aud`) is passthrough.                           |
 | `delegation.oneUserPerRequest`            | boolean                        | `true`               | All delegate tokens in one request must name the same user (`iss` + `sub`).                                                  |
 | `delegation.recordSubject`                | `hash` \| `plain`              | `hash`               | Audit subject: HMAC pseudonym of `iss\|sub`, or `sub` as is.                                                                 |
@@ -330,7 +331,7 @@ key**:
     "delegation": {
       "audience": "pfqa",                 // required: what this upstream's tokens must carry in `aud`
       "header": "x-cso-identity",         // forwardHeaders key carrying the JWT (default: the only one)
-      "verify": "structural",             // the only mode today
+      "verify": "structural",             // or "signature" (below)
       "maxLifetimeSeconds": 120,          // default 3600
       "clockSkewSeconds": 30,             // default 30
       "allowedActors": ["master-quote-agent"],
@@ -342,16 +343,20 @@ key**:
 "delegation": { "gatewayAudiences": ["mcp-bastion"], "oneUserPerRequest": true, "recordSubject": "hash" }
 ```
 
-| Rule                                               | Fires when                                                                        | Default (`balanced`) |
-| -------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------- |
-| `delegation-malformed`                             | not a strict JWS compact token (see below), or a wrongly typed claim              | block                |
-| `delegation-audience-mismatch`                     | no `aud` value equals this upstream's `audience` (a sibling's token)              | block                |
-| `delegation-passthrough`                           | `aud` is absent, or any `aud` value is in `gatewayAudiences`                      | block                |
-| `delegation-subject-mixing`                        | the request's delegate tokens name more than one (`iss`, `sub`)                   | block                |
-| `delegation-expired` / `-not-yet-valid`            | `now > exp + skew` / `nbf > now + skew`                                           | block                |
-| `delegation-lifetime-excess`                       | `exp − iat > maxLifetimeSeconds`, or no `exp`                                     | block                |
-| `delegation-actor-not-allowed` / `-actor-required` | current actor (`act.sub`, else `act.client_id`) not in `allowedActors` / no `act` | block                |
-| `delegation-chain-depth` / `-chain-cycle`          | the `act` chain is longer than `maxChainDepth` / names an actor twice             | **warn**             |
+| Rule                                               | Fires when                                                                               | Default (`balanced`) |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------- |
+| `delegation-malformed`                             | not a strict JWS compact token (see below), or a wrongly typed claim                     | block                |
+| `delegation-audience-mismatch`                     | no `aud` value equals this upstream's `audience` (a sibling's token)                     | block                |
+| `delegation-passthrough`                           | `aud` is absent, or any `aud` value is in `gatewayAudiences`                             | block                |
+| `delegation-subject-mixing`                        | the request's delegate tokens name more than one (`iss`, `sub`)                          | block                |
+| `delegation-expired` / `-not-yet-valid`            | `now > exp + skew` / `nbf > now + skew`                                                  | block                |
+| `delegation-lifetime-excess`                       | `exp − iat > maxLifetimeSeconds`, or no `exp`                                            | block                |
+| `delegation-actor-not-allowed` / `-actor-required` | current actor (`act.sub`, else `act.client_id`) not in `allowedActors` / no `act`        | block                |
+| `delegation-chain-depth` / `-chain-cycle`          | the `act` chain is longer than `maxChainDepth` / names an actor twice                    | **warn**             |
+| `delegation-alg-disallowed`                        | signature mode: `alg` is not in `algorithms` (case-sensitive; `none` and HMAC never are) | block                |
+| `delegation-key-unknown`                           | signature mode: no trusted key matches the `kid`, or the key set could not be fetched    | block                |
+| `delegation-signature-invalid`                     | signature mode: the signature does not verify under the trusted key                      | block                |
+| `delegation-issuer-mismatch`                       | signature mode: `iss` is not the configured `issuer`                                     | block                |
 
 Chain depth and cycles concern prior actors, which RFC 8693 §4.1 calls informational, so they are
 medium severity and only warned on unless `security.onDelegationChain` (or the `strict` profile) says
@@ -362,8 +367,9 @@ medium severity and only warned on unless `security.onDelegationChain` (or the `
   allowed. Anything else fails closed as `delegation-malformed`.
 - **One verdict per request.** On first need Bastion decodes every delegation-configured token the
   request carries, runs the per-upstream checks and the cross-token subject check, and caches the
-  verdict for the rest of the request. The pure checker is exported as
-  `checkDelegation(policy, carriedHeaders, now)`.
+  verdict for the rest of the request. The checkers are exported as
+  `checkDelegation(policy, carriedHeaders, now)` (structural, synchronous) and
+  `checkDelegationAsync(policy, carriedHeaders, now)` (adds signature verification).
 - **Before any upstream contact.** A blocked `tools/call` is refused before Bastion connects (on-demand
   connects included), with a tool error naming the rule, never a token or claim value, and an audit event
   with decision `blocked_delegation`. `tools/list` leaves out an upstream the request is blocked from. As a
@@ -371,7 +377,7 @@ medium severity and only warned on unless `security.onDelegationChain` (or the `
   sends made inside the request).
 - **Who acted for whom.** Calls to a delegation-configured upstream carry an audit `delegation` record:
   `subject`, `issuer`, `audience`, `tokenId` (`jti`), `expiresAt`, `actors` (current first), `chainDepth`,
-  `verified: "structural"` and the findings. Never the token. In `hash` mode the subject is `"hmac:"` + the
+  `verified` (`structural`, `signature` when the signature verified, or `failed`) and the findings. Never the token. In `hash` mode the subject is `"hmac:"` + the
   first 16 hex characters of HMAC-SHA256(key, `iss|sub`): an operator with the key can recompute it to find
   one user's records. The key is `delegation.subjectKey`, else `MCP_BASTION_SUBJECT_KEY`, else the audit
   integrity key, else a random key per process, whose pseudonyms do **not** link across restarts.
@@ -379,14 +385,46 @@ medium severity and only warned on unless `security.onDelegationChain` (or the `
   the last violation is a rule id and a time only.
 - **Config checks.** `delegation` needs `forwardHeaders`; `header` must be one of its keys; two upstreams
   cannot share an `audience`, and no upstream audience may be a gateway audience; unknown keys are
-  rejected; `verify: "signature"` is rejected as not yet supported.
+  rejected. Signature mode needs `issuer`, a non-empty `algorithms` list and exactly one key source.
+
+### Signature mode
+
+When the issuer signs delegate tokens with an asymmetric key (ES256, EdDSA, RS256, PS256, …), Bastion
+can verify them against the issuer's **public** keys:
+
+```jsonc
+"delegation": {
+  "audience": "pfqa",
+  "verify": "signature",
+  "issuer": "https://spire.example/identity",               // exact match on `iss`
+  "algorithms": ["ES256", "EdDSA"],                          // allow-list; HS256/384/512 and none are rejected
+  "jwksUrl": "https://spire.example/.well-known/jwks.json"   // or "jwks": { "keys": [ … public JWKs … ] }
+}
+```
+
+- **Keys come only from the configured source.** `jku`, `x5u`, `x5c` and embedded `jwk` headers are never
+  followed. An inline `jwks` with private or secret members (`d`, `p`, `q`, `dp`, `dq`, `qi`, `oth`, `k`)
+  is rejected at config load. `jwksUrl` must be HTTPS, except to a loopback host.
+- **The algorithm allow-list runs first**, case-sensitively, before any key lookup: `alg: none` (in any
+  casing) and HS256 signed with the public key are refused without a fetch. A critical header extension
+  (`crit`, e.g. an unencoded payload) is refused.
+- **Remote key sets** are fetched on first use and cached. A token with an unknown `kid` triggers at most
+  one refetch per 30 s cooldown. A fetch failure or a 5 s timeout **fails closed**: the call is blocked as
+  `delegation-key-unknown`, the upstream's `lastError` says the key set is unavailable, and further fetches
+  wait for the cooldown.
+- **The structural rules still run** on a verified token, under the same names, and the audit record says
+  `verified: "signature"`.
 
 **Honest limits.**
 
 - Structural mode **authenticates nothing**: a party that can forge tokens can forge consistent claims. It
   stops misrouting, passthrough, user mixing, stale relay and chain abuse by honest-but-wrong or
-  prompt-injected callers. The upstream remains the verifier. Signature mode (asymmetric tokens verified
-  against a JWKS) is planned for authentication at the gateway.
+  prompt-injected callers. The upstream remains the verifier. Use signature mode (asymmetric tokens) for
+  authentication at the gateway.
+- Signature mode holds **public keys only**, so Bastion stays keyless: it can verify tokens but never mint
+  one. It needs the issuer to sign with an asymmetric algorithm; HS256 tokens can only be checked
+  structurally, because verifying them needs the shared secret. It trusts whatever the configured key set
+  says, so the security of `jwksUrl` (HTTPS, the issuer's own host) is the security of the check.
 - The one-user-per-request check covers only tokens configured with `delegation`.
 - Replay inside the token's lifetime is not stopped (no `jti` cache yet; possible later, opt-in, bounded).
 

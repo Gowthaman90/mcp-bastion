@@ -79,6 +79,8 @@ export {
   checkErrorSteering,
   // Keyless delegation checks (structural mode)
   checkDelegation,
+  checkDelegationAsync,
+  delegationKeySet,
   decodeJwsCompact,
   subjectPseudonym,
 } from "./security/index.js";
@@ -86,6 +88,9 @@ export type { OpenResult, SealOptions, OpenOptions, ToolCallOutcome } from "./se
 export type {
   CarriedHeaders,
   DelegationFinding,
+  DelegationKeySet,
+  DelegationKeySource,
+  DelegationSignatureTrust,
   DelegationPolicy,
   DelegationResult,
   DelegationRule,

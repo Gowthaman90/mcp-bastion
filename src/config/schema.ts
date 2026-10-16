@@ -7,6 +7,8 @@
  */
 import { z } from "zod";
 
+import { checkTransportSecurity } from "../security/transport.js";
+
 /** A local upstream launched as a subprocess and reached over stdio. */
 export const StdioServerConfigSchema = z.object({
   /** Transport discriminator. Defaults to `stdio` so it may be omitted. */
@@ -71,33 +73,147 @@ const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set([
  * Bastion holds no secret: in `structural` mode it decodes and checks the claims, it does not
  * verify the signature (the upstream remains the authenticator).
  */
-export const DelegationServerConfigSchema = z.strictObject({
-  /**
-   * The `forwardHeaders` key (upstream header name) whose value is the delegate token. Defaults to
-   * the only `forwardHeaders` key; required when there are several.
-   */
-  header: HeaderNameSchema.optional(),
-  /** The audience this upstream's tokens must carry (exact, case-sensitive). Required. */
-  audience: z.string().min(1),
-  /**
-   * `structural` (the default) checks claims without verifying the signature. `signature` (JWKS
-   * verification) is reserved for a later release and is rejected at config load for now.
-   */
-  verify: z.enum(["structural", "signature"]).default("structural"),
-  /** Longest accepted token lifetime (`exp` − `iat`), in seconds. */
-  maxLifetimeSeconds: z.number().int().positive().default(3600),
-  /** Clock tolerance applied to `exp` and `nbf`, in seconds. */
-  clockSkewSeconds: z.number().int().nonnegative().max(300).default(30),
-  /**
-   * Agents allowed to act for the user: the current actor (`act.sub`, else `act.client_id`) must be
-   * one of these. Unset = any actor.
-   */
-  allowedActors: z.array(z.string().min(1)).nonempty().optional(),
-  /** Require an `act` claim (a token the user's own client presents directly is then refused). */
-  requireActor: z.boolean().default(false),
-  /** Longest accepted actor chain (current actor plus nested prior actors). Unset = no limit. */
-  maxChainDepth: z.number().int().positive().optional(),
+/** Asymmetric JWS algorithms accepted in signature mode (exact, case-sensitive names). */
+export const DELEGATION_SIGNATURE_ALGORITHMS = [
+  "ES256",
+  "ES384",
+  "ES512",
+  "EdDSA",
+  "Ed25519",
+  "RS256",
+  "RS384",
+  "RS512",
+  "PS256",
+  "PS384",
+  "PS512",
+] as const;
+
+/** JWK members that only a private or symmetric key carries. A trusted key set must hold none. */
+const PRIVATE_JWK_MEMBERS = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"] as const;
+
+/** A public JWK set (RFC 7517 §5), as embedded in config. */
+const PublicJwksSchema = z.object({
+  keys: z
+    .array(z.looseObject({ kty: z.string().min(1) }))
+    .nonempty()
+    .superRefine((keys, ctx) => {
+      keys.forEach((key, i) => {
+        const secret = PRIVATE_JWK_MEMBERS.filter((m) => m in key);
+        if (secret.length > 0) {
+          ctx.addIssue({
+            code: "custom",
+            path: [i],
+            message: `JWK carries private or secret member(s) ${secret.join(", ")}: only public keys may be configured`,
+          });
+        }
+      });
+    }),
 });
+
+export const DelegationServerConfigSchema = z
+  .strictObject({
+    /**
+     * The `forwardHeaders` key (upstream header name) whose value is the delegate token. Defaults to
+     * the only `forwardHeaders` key; required when there are several.
+     */
+    header: HeaderNameSchema.optional(),
+    /** The audience this upstream's tokens must carry (exact, case-sensitive). Required. */
+    audience: z.string().min(1),
+    /**
+     * `structural` (the default) checks claims without verifying the signature. `signature` also
+     * verifies the signature against a public key set (`jwksUrl` or inline `jwks`), with an
+     * algorithm allow-list and an expected issuer. Either way Bastion holds no secret.
+     */
+    verify: z.enum(["structural", "signature"]).default("structural"),
+    /** Signature mode: the expected `iss` (exact). */
+    issuer: z.string().min(1).optional(),
+    /**
+     * Signature mode: accepted `alg` values (case-sensitive). HMAC (`HS256/384/512`) and `none` are
+     * never accepted: they would need a shared secret, or no key at all.
+     */
+    algorithms: z
+      .array(
+        z.string().superRefine((alg, ctx) => {
+          if (/^(hs(256|384|512)|none)$/i.test(alg)) {
+            ctx.addIssue({
+              code: "custom",
+              message: `algorithm "${alg}" is never accepted: signature mode verifies with public keys only`,
+            });
+          } else if (!(DELEGATION_SIGNATURE_ALGORITHMS as readonly string[]).includes(alg)) {
+            ctx.addIssue({
+              code: "custom",
+              message: `unsupported algorithm "${alg}" (use one of ${DELEGATION_SIGNATURE_ALGORITHMS.join(", ")})`,
+            });
+          }
+        }),
+      )
+      .nonempty()
+      .optional(),
+    /** Signature mode: where to fetch the issuer's public JWK set (HTTPS, except loopback). */
+    jwksUrl: z.string().url().optional(),
+    /** Signature mode: the issuer's public JWK set, inline (no private members allowed). */
+    jwks: PublicJwksSchema.optional(),
+    /** Longest accepted token lifetime (`exp` − `iat`), in seconds. */
+    maxLifetimeSeconds: z.number().int().positive().default(3600),
+    /** Clock tolerance applied to `exp` and `nbf`, in seconds. */
+    clockSkewSeconds: z.number().int().nonnegative().max(300).default(30),
+    /**
+     * Agents allowed to act for the user: the current actor (`act.sub`, else `act.client_id`) must be
+     * one of these. Unset = any actor.
+     */
+    allowedActors: z.array(z.string().min(1)).nonempty().optional(),
+    /** Require an `act` claim (a token the user's own client presents directly is then refused). */
+    requireActor: z.boolean().default(false),
+    /** Longest accepted actor chain (current actor plus nested prior actors). Unset = no limit. */
+    maxChainDepth: z.number().int().positive().optional(),
+  })
+  .superRefine((cfg, ctx) => {
+    const signatureOnly = (["issuer", "algorithms", "jwksUrl", "jwks"] as const).filter(
+      (k) => cfg[k] !== undefined,
+    );
+    if (cfg.verify !== "signature") {
+      for (const key of signatureOnly) {
+        ctx.addIssue({
+          code: "custom",
+          path: [key],
+          message: `"${key}" is only valid with verify: "signature"`,
+        });
+      }
+      return;
+    }
+    if (cfg.issuer === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["issuer"],
+        message: 'verify "signature" needs issuer',
+      });
+    }
+    if (cfg.algorithms === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["algorithms"],
+        message: 'verify "signature" needs a non-empty algorithms list',
+      });
+    }
+    if ((cfg.jwksUrl === undefined) === (cfg.jwks === undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["jwksUrl"],
+        message: 'verify "signature" needs exactly one key source: jwksUrl or jwks',
+      });
+    }
+    if (cfg.jwksUrl !== undefined) {
+      if (!/^https?:\/\//i.test(cfg.jwksUrl)) {
+        ctx.addIssue({ code: "custom", path: ["jwksUrl"], message: "jwksUrl must be http(s)" });
+      } else if (checkTransportSecurity(cfg.jwksUrl).length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["jwksUrl"],
+          message: "jwksUrl must use HTTPS (plaintext HTTP is allowed only to a loopback host)",
+        });
+      }
+    }
+  });
 export type DelegationServerConfig = z.infer<typeof DelegationServerConfigSchema>;
 
 /** A remote upstream reached over Streamable HTTP. */
@@ -181,14 +297,6 @@ export const HttpServerConfigSchema = z
           code: "custom",
           path: ["delegation", "header"],
           message: `delegation.header "${cfg.delegation.header}" must be a forwardHeaders key (${keys.join(", ")})`,
-        });
-      }
-      if (cfg.delegation.verify === "signature") {
-        ctx.addIssue({
-          code: "custom",
-          path: ["delegation", "verify"],
-          message:
-            'delegation.verify "signature" is not yet supported: use "structural" (claims checked, signature left to the upstream)',
         });
       }
     }

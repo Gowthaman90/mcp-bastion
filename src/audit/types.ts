@@ -51,8 +51,11 @@ export interface AuditDelegationRecord {
   /** Current actor first, then prior actors (agent ids). */
   actors: string[];
   chainDepth: number;
-  /** `structural`: claims checked, signature not verified. */
-  verified: "structural";
+  /**
+   * `structural`: claims checked, signature not verified. `signature`: the signature verified under
+   * a trusted public key. `failed`: signature mode, and it did not verify.
+   */
+  verified: "structural" | "signature" | "failed";
   findings: { rule: string; severity: Severity }[];
 }
 
