@@ -19,7 +19,7 @@ import type { InputRequiredResult, Tool } from "@modelcontextprotocol/server";
 
 import { AuditEngine, createSinks, type ComplianceReport } from "../audit/index.js";
 import type { BastionConfig } from "../config/index.js";
-import { UpstreamDisconnectedError } from "../errors.js";
+import { MissingForwardedHeaderError, UpstreamDisconnectedError } from "../errors.js";
 import { textResult } from "../internal/index.js";
 import { logger } from "../observability/index.js";
 import {
@@ -38,7 +38,7 @@ import type {
 } from "../security/index.js";
 import { ControlAction, controlToolName } from "./constants.js";
 import type { ReconnectResult, ServerStatus, ToolRoute } from "./types.js";
-import { UpstreamConnection } from "./upstream-connection.js";
+import { isAuthFailure, UpstreamConnection } from "./upstream-connection.js";
 
 export class UpstreamManager {
   private readonly upstreams = new Map<string, UpstreamConnection>();
@@ -121,9 +121,49 @@ export class UpstreamManager {
     this.toolsChangedListener = listener;
   }
 
-  /** Connect all upstreams concurrently. Individual failures are non-fatal (they auto-reconnect). */
+  /**
+   * Connect all `startup` upstreams concurrently. Individual failures are non-fatal (they
+   * auto-reconnect). `onDemand` upstreams stay idle until a request needs them.
+   */
   async connectAll(): Promise<void> {
-    await Promise.allSettled([...this.upstreams.values()].map((u) => u.connect()));
+    await Promise.allSettled(
+      [...this.upstreams.values()]
+        .filter((u) => u.connectMode === "startup")
+        .map((u) => u.connect()),
+    );
+  }
+
+  /**
+   * Incoming header names any upstream forwards (lower-cased). The HTTP listener keeps only these
+   * from each request, so no other incoming header can reach an upstream.
+   */
+  forwardedIncomingHeaders(): string[] {
+    const names = new Set<string>();
+    for (const upstream of this.upstreams.values()) {
+      for (const h of upstream.forwardedIncomingHeaders) names.add(h);
+    }
+    return [...names];
+  }
+
+  /**
+   * Before a `tools/list`: connect every idle `onDemand` upstream the current request can reach
+   * (it carries the headers that upstream forwards), and re-list any marked stale. Failures are
+   * logged and recorded as the upstream's `lastError`; the list simply omits that upstream.
+   */
+  async prepareUpstreams(): Promise<void> {
+    await Promise.allSettled(
+      [...this.upstreams.values()].map(async (upstream) => {
+        if (upstream.missingForwardedHeaders().length > 0) return;
+        try {
+          await upstream.prepareForRequest();
+        } catch (err) {
+          logger.warn(
+            { server: upstream.name, err: upstream.errorMessage(err) },
+            "upstream not available for this request",
+          );
+        }
+      }),
+    );
   }
 
   /**
@@ -163,6 +203,23 @@ export class UpstreamManager {
   ): Promise<ToolCallOutcome> {
     const callArgs = (args ?? {}) as Record<string, unknown>;
     const principal = opts.principal ?? "stdio";
+
+    // Gateway mode: the target upstream may need this request's forwarded identity. Without it the
+    // upstream is never called; with it, an idle on-demand upstream is connected as this caller.
+    const target = this.upstreams.get(this.serverOfName(name) ?? "");
+    if (target) {
+      const missing = target.missingForwardedHeaders();
+      if (missing.length > 0) {
+        const message = new MissingForwardedHeaderError(target.name, missing).message;
+        logger.warn({ tool: name, server: target.name, missing }, "call not forwarded");
+        return textResult(message, true);
+      }
+      try {
+        await target.prepareForRequest();
+      } catch (err) {
+        return textResult(this.failureText(target, name, err), true);
+      }
+    }
 
     // Re-observe current definitions so a rug pull since the last listing is caught.
     this.syncSecurity();
@@ -223,6 +280,8 @@ export class UpstreamManager {
       inputResponses: opts.inputResponses,
       requestState: upstreamState,
     };
+    const forwarded = upstream.presentForwardedHeaders();
+    if (forwarded.length > 0) ctx.forwardedHeaders = forwarded;
     try {
       // Security interceptors run first; the terminal step is the real upstream call.
       const outcome = await runPipeline(
@@ -259,9 +318,35 @@ export class UpstreamManager {
           true,
         );
       }
-      logger.error({ tool: name, err: (err as Error)?.message ?? String(err) }, "tool call failed");
-      return textResult(`Tool "${name}" failed: ${(err as Error)?.message ?? String(err)}`, true);
+      const message = upstream.noteFailure(err);
+      logger.error({ tool: name, err: message }, "tool call failed");
+      return textResult(this.failureText(upstream, name, err), true);
     }
+  }
+
+  /** The tool-result text for an upstream failure; a 401 is reported as an authentication failure. */
+  private failureText(upstream: UpstreamConnection, tool: string, err: unknown): string {
+    if (err instanceof MissingForwardedHeaderError) return err.message;
+    if (isAuthFailure(err)) {
+      return (
+        `${upstream.name}: authentication failed — the upstream answered HTTP 401 Unauthorized, so ` +
+        `"${tool}" was not run. The identity sent with this request was missing, invalid or expired.`
+      );
+    }
+    return `Tool "${tool}" failed: ${upstream.errorMessage(err)}`;
+  }
+
+  /**
+   * The upstream a namespaced tool name belongs to, by its `<server><separator>` prefix (the
+   * longest match wins), so an idle on-demand upstream can be found before its tools are known.
+   */
+  private serverOfName(namespacedName: string): string | undefined {
+    let best: string | undefined;
+    for (const server of this.upstreams.keys()) {
+      if (!namespacedName.startsWith(server + this.separator)) continue;
+      if (!best || server.length > best.length) best = server;
+    }
+    return best;
   }
 
   /** Snapshot the health of every upstream (backs `bastion__status`). */

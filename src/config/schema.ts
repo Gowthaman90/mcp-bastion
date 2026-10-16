@@ -28,23 +28,128 @@ export const StdioServerConfigSchema = z.object({
 });
 export type StdioServerConfig = z.infer<typeof StdioServerConfigSchema>;
 
+/** An HTTP field name (RFC 9110 `token`). */
+const HeaderNameSchema = z
+  .string()
+  .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, { message: "must be a valid HTTP header name" });
+
+/**
+ * Hop-by-hop headers (RFC 9110 §7.6.1) and connection-level fields. They describe one connection,
+ * not the request, so they are never forwarded in either direction.
+ */
+export const HOP_BY_HOP_HEADERS: ReadonlySet<string> = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "host",
+  "content-length",
+]);
+
+/**
+ * Upstream header names the MCP transport itself sets. Forwarding a caller's value onto one of these
+ * would let a downstream request rewrite the protocol framing, so they cannot be forward targets.
+ */
+const TRANSPORT_OWNED_HEADERS: ReadonlySet<string> = new Set([
+  "content-type",
+  "accept",
+  "last-event-id",
+  "mcp-session-id",
+  "mcp-protocol-version",
+  "mcp-method",
+  "mcp-name",
+]);
+
 /** A remote upstream reached over Streamable HTTP. */
-export const HttpServerConfigSchema = z.object({
-  transport: z.literal("http"),
-  /** Base URL of the remote MCP endpoint. */
-  url: z.string().url(),
-  /** Optional headers sent on every request (e.g. `Authorization`). */
-  headers: z.record(z.string(), z.string()).optional(),
-  /** Protocol era negotiation (see the stdio variant). */
-  protocol: z.enum(["auto", "legacy", "2026-07-28"]).default("auto"),
-});
+export const HttpServerConfigSchema = z
+  .object({
+    transport: z.literal("http"),
+    /** Base URL of the remote MCP endpoint. */
+    url: z.string().url(),
+    /** Optional headers sent on every request (e.g. `Authorization`). */
+    headers: z.record(z.string(), z.string()).optional(),
+    /** Protocol era negotiation (see the stdio variant). */
+    protocol: z.enum(["auto", "legacy", "2026-07-28"]).default("auto"),
+    /**
+     * Per-request header forwarding (gateway mode): upstream header name → incoming (downstream)
+     * header name. On every upstream request made while serving a downstream HTTP request, the
+     * incoming header's value is sent under the upstream name. Only listed headers are forwarded;
+     * a forwarded header overrides a static `headers` entry of the same name. Requires
+     * `listen.mode: "http"`.
+     */
+    forwardHeaders: z.record(HeaderNameSchema, HeaderNameSchema).optional(),
+    /**
+     * What to do when a downstream request lacks a header named in `forwardHeaders`: `error` (the
+     * default) answers with a tool error and never calls the upstream; `omit` calls it without.
+     */
+    onMissingForwardedHeader: z.enum(["error", "omit"]).default("error"),
+    /**
+     * `startup` (the default) connects at boot. `onDemand` connects on the first downstream request
+     * that needs this upstream, carrying that request's forwarded headers — for upstreams that
+     * authenticate every request, including `initialize`, as the calling user.
+     */
+    connect: z.enum(["startup", "onDemand"]).default("startup"),
+    /**
+     * Extra header names that count as authentication for `bastion__status` and cache policy, on top
+     * of the standard ones (`Authorization`, `X-API-Key`, …). `forwardHeaders` keys always count.
+     */
+    authHeaders: z.array(HeaderNameSchema).optional(),
+  })
+  .superRefine((cfg, ctx) => {
+    for (const [upstream, incoming] of Object.entries(cfg.forwardHeaders ?? {})) {
+      const up = upstream.toLowerCase();
+      if (HOP_BY_HOP_HEADERS.has(up) || TRANSPORT_OWNED_HEADERS.has(up)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["forwardHeaders", upstream],
+          message: `"${upstream}" cannot be a forwarded header: it is a hop-by-hop or transport-owned header`,
+        });
+      }
+      if (HOP_BY_HOP_HEADERS.has(incoming.toLowerCase())) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["forwardHeaders", upstream],
+          message: `"${incoming}" is a hop-by-hop header and is never forwarded`,
+        });
+      }
+    }
+  });
 export type HttpServerConfig = z.infer<typeof HttpServerConfigSchema>;
+
+/** Keys that only make sense on an HTTP upstream (they act on per-request HTTP headers). */
+const HTTP_ONLY_KEYS = ["forwardHeaders", "onMissingForwardedHeader", "connect", "authHeaders"];
 
 /**
  * A single upstream MCP server that Bastion proxies — either a local `stdio`
  * subprocess or a remote `http` endpoint. `transport` may be omitted for stdio.
+ *
+ * The stdio variant would silently strip HTTP-only keys, so they are rejected up front with a
+ * readable message instead.
  */
-export const ServerConfigSchema = z.union([StdioServerConfigSchema, HttpServerConfigSchema]);
+export const ServerConfigSchema = z.preprocess(
+  (raw, ctx) => {
+    if (raw && typeof raw === "object" && (raw as { transport?: unknown }).transport !== "http") {
+      for (const key of HTTP_ONLY_KEYS) {
+        if (key in raw) {
+          ctx.addIssue({
+            code: "custom",
+            path: [key],
+            message: `"${key}" is only valid on an HTTP upstream (transport: "http"); a stdio upstream has no per-request HTTP headers`,
+            fatal: true,
+          });
+          return z.NEVER;
+        }
+      }
+    }
+    return raw;
+  },
+  z.union([StdioServerConfigSchema, HttpServerConfigSchema]),
+);
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
 
 /** Auto-reconnect behaviour applied to every upstream. */
@@ -352,14 +457,37 @@ export const ListenConfigSchema = z
 export type ListenConfig = z.infer<typeof ListenConfigSchema>;
 
 /** The complete, validated Bastion configuration. */
-export const BastionConfigSchema = z.object({
-  /** Map of upstream server name → server configuration. */
-  servers: z.record(z.string(), ServerConfigSchema),
-  reconnect: ReconnectConfigSchema,
-  healthCheck: HealthCheckConfigSchema,
-  namespace: NamespaceConfigSchema,
-  security: SecurityConfigSchema,
-  audit: AuditConfigSchema,
-  listen: ListenConfigSchema,
-});
+export const BastionConfigSchema = z
+  .object({
+    /** Map of upstream server name → server configuration. */
+    servers: z.record(z.string(), ServerConfigSchema),
+    reconnect: ReconnectConfigSchema,
+    healthCheck: HealthCheckConfigSchema,
+    namespace: NamespaceConfigSchema,
+    security: SecurityConfigSchema,
+    audit: AuditConfigSchema,
+    listen: ListenConfigSchema,
+  })
+  .superRefine((cfg, ctx) => {
+    for (const [name, server] of Object.entries(cfg.servers)) {
+      if (server.transport !== "http" || !server.forwardHeaders) continue;
+      if (Object.keys(server.forwardHeaders).length === 0) continue;
+      if (cfg.listen.mode !== "http") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["servers", name, "forwardHeaders"],
+          message: `forwardHeaders needs listen.mode "http": Bastion can only forward headers that arrive on a downstream HTTP request`,
+        });
+      }
+      // The front-door bearer is Bastion's own credential, not the caller's; never pass it on.
+      const incoming = Object.values(server.forwardHeaders).map((h) => h.toLowerCase());
+      if (cfg.listen.authToken && incoming.includes("authorization")) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["servers", name, "forwardHeaders"],
+          message: `cannot forward the incoming "authorization" header while listen.authToken is set: it carries Bastion's own bearer token`,
+        });
+      }
+    }
+  });
 export type BastionConfig = z.infer<typeof BastionConfigSchema>;

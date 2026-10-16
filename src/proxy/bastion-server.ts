@@ -66,10 +66,14 @@ export function buildBastionServer(
   // tools/list — aggregated upstream tools + Bastion's control tools. When an upstream attached
   // caching hints, Bastion forwards the *policed* hints so a downstream cache can never hold a
   // definition longer, or share it wider, than policy allows. Pre-revision upstreams send none.
-  server.setRequestHandler("tools/list", async () => ({
-    tools: [...manager.listUpstreamTools(), ...buildControlTools(manager.separator)],
-    ...(hints ?? {}),
-  }));
+  server.setRequestHandler("tools/list", async () => {
+    // Connect idle on-demand upstreams with this request's forwarded identity before listing.
+    await manager.prepareUpstreams();
+    return {
+      tools: [...manager.listUpstreamTools(), ...buildControlTools(manager.separator)],
+      ...(hints ?? {}),
+    };
+  });
 
   // tools/call — dispatch control tools locally; route everything else upstream, carrying the
   // MRTR retry material (inputResponses + echoed requestState) when present.

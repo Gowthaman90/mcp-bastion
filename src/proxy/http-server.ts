@@ -16,7 +16,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import type { AuthInfo, McpHttpHandler } from "@modelcontextprotocol/server";
 
-import type { UpstreamManager } from "../core/index.js";
+import { runWithRequestHeaders, type UpstreamManager } from "../core/index.js";
 import { logger } from "../observability/index.js";
 import { checkHeaderBodyCoherence, checkRequestOrigin } from "../security/index.js";
 import { addToolsChangedTarget, buildBastionServer } from "./bastion-server.js";
@@ -118,6 +118,9 @@ export async function startHttpServer(
     },
   );
   const removeTarget = addToolsChangedTarget(() => handler.notify.toolsChanged());
+  // Gateway mode: the only incoming headers that may travel upstream are those some upstream's
+  // `forwardHeaders` names. Everything else stays at the front door.
+  const forwardable = manager.forwardedIncomingHeaders();
 
   const httpServer = createServer((req, res) => {
     handle(req, res).catch((err) => {
@@ -230,7 +233,16 @@ export async function startHttpServer(
       headers,
       ...(req.method === "POST" ? { body: raw } : {}),
     });
-    const resp = await handler.fetch(webReq, { authInfo, parsedBody: body });
+    // Bind this request's forwardable headers for the whole handling of the request, so every
+    // upstream send it causes carries them, and no concurrent request can see them.
+    const carried: Record<string, string> = {};
+    for (const name of forwardable) {
+      const value = req.headers[name];
+      if (typeof value === "string") carried[name] = value;
+    }
+    const resp = await runWithRequestHeaders(carried, () =>
+      handler.fetch(webReq, { authInfo, parsedBody: body }),
+    );
     const outHeaders: Record<string, string> = {};
     resp.headers.forEach((value, key) => {
       outHeaders[key] = value;

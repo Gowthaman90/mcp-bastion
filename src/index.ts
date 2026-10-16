@@ -112,7 +112,12 @@ export type {
 export type { AuditConfig, SinkConfig } from "./config/index.js";
 
 // Errors
-export { BastionError, ConfigError, UpstreamDisconnectedError } from "./errors.js";
+export {
+  BastionError,
+  ConfigError,
+  UpstreamDisconnectedError,
+  MissingForwardedHeaderError,
+} from "./errors.js";
 
 // Observability
 export { logger } from "./observability/index.js";

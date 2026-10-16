@@ -8,9 +8,16 @@
  *
  * @packageDocumentation
  */
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  SdkErrorCode,
+  SdkHttpError,
+  StreamableHTTPClientTransport,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 import type {
   CacheableRequestOptions,
+  FetchLike,
   McpSubscription,
   ProtocolEra,
 } from "@modelcontextprotocol/client";
@@ -18,7 +25,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import type { Tool } from "@modelcontextprotocol/server";
 
 import type { ReconnectConfig, ServerConfig } from "../config/index.js";
-import { UpstreamDisconnectedError } from "../errors.js";
+import { MissingForwardedHeaderError, UpstreamDisconnectedError } from "../errors.js";
 import {
   checkCachePolicy,
   checkTransportSecurity,
@@ -30,6 +37,7 @@ import {
 import { buildEnv, withTimeout } from "../internal/index.js";
 import { logger } from "../observability/index.js";
 import { BASTION_NAME, BASTION_VERSION } from "./constants.js";
+import { currentRequestContext, runOutsideRequest } from "./request-context.js";
 import type { ConnectionState } from "./types.js";
 
 /** A callback fired whenever an upstream's availability or tool set changes. */
@@ -55,10 +63,30 @@ function negotiationMode(
 const AUTH_HEADERS = ["authorization", "x-api-key", "api-key", "apikey", "x-auth-token", "cookie"];
 
 /** Whether the given headers include a recognized authentication header. */
-function headersCarryAuth(headers: Record<string, string> | undefined): boolean {
+function headersCarryAuth(
+  headers: Record<string, string> | undefined,
+  extra: ReadonlySet<string> = new Set(),
+): boolean {
   if (!headers) return false;
   const present = new Set(Object.keys(headers).map((k) => k.toLowerCase()));
-  return AUTH_HEADERS.some((h) => present.has(h));
+  return AUTH_HEADERS.some((h) => present.has(h)) || [...extra].some((h) => present.has(h));
+}
+
+/** Whether an upstream error is an HTTP 401: the upstream refused the credentials it was sent. */
+export function isAuthFailure(err: unknown): boolean {
+  if (err instanceof UnauthorizedError) return true;
+  if (err instanceof SdkHttpError) {
+    return err.status === 401 || err.code === SdkErrorCode.ClientHttpAuthentication;
+  }
+  return false;
+}
+
+/** One `forwardHeaders` entry, names lower-cased. */
+interface ForwardRule {
+  /** Header name sent upstream. */
+  upstream: string;
+  /** Header name read from the downstream request. */
+  incoming: string;
 }
 
 export class UpstreamConnection {
@@ -77,6 +105,17 @@ export class UpstreamConnection {
   private rawCacheHints: CacheHints = {};
   /** The same hints after policy: TTL clamped, scope narrowed. `undefined` until a list carried hints. */
   private policedCacheHints?: ClampedCacheHints;
+  /** Gateway-mode header forwarding rules (empty unless `forwardHeaders` is configured). */
+  private readonly forward: readonly ForwardRule[];
+  /** Configured `authHeaders`, lower-cased. */
+  private readonly authHeaderNames: ReadonlySet<string>;
+  /** In-flight on-demand connect, shared by concurrent first requests. */
+  private connecting?: Promise<void>;
+  /**
+   * Set when a forwarding upstream announces `tools/list_changed`: the re-list waits for the next
+   * downstream request so it carries that request's identity rather than none.
+   */
+  private toolsStale = false;
 
   /**
    * @param name         The configured name of this upstream.
@@ -91,7 +130,126 @@ export class UpstreamConnection {
     private readonly reconnectCfg: ReconnectConfig,
     private readonly onChange: UpstreamChangeListener = () => {},
     private readonly policy: { maxCacheTtlMs?: number } = {},
-  ) {}
+  ) {
+    const http = config.transport === "http" ? config : undefined;
+    this.forward = Object.entries(http?.forwardHeaders ?? {}).map(([upstream, incoming]) => ({
+      upstream: upstream.toLowerCase(),
+      incoming: incoming.toLowerCase(),
+    }));
+    this.authHeaderNames = new Set((http?.authHeaders ?? []).map((h) => h.toLowerCase()));
+    if (this.connectMode === "onDemand") this.connectionState = "idle";
+  }
+
+  /** `startup` connects at boot; `onDemand` connects on the first request that needs it. */
+  get connectMode(): "startup" | "onDemand" {
+    return this.config.transport === "http" ? this.config.connect : "startup";
+  }
+
+  /** Incoming (downstream) header names this upstream forwards, lower-cased. */
+  get forwardedIncomingHeaders(): string[] {
+    return this.forward.map((f) => f.incoming);
+  }
+
+  /**
+   * Incoming headers this upstream needs that the current downstream request did not carry, when
+   * that is an error (`onMissingForwardedHeader: "error"`). Outside any request nothing was carried.
+   */
+  missingForwardedHeaders(): string[] {
+    if (this.forward.length === 0 || this.onMissing !== "error") return [];
+    const headers = currentRequestContext()?.headers;
+    return this.forward.filter((f) => !headers?.has(f.incoming)).map((f) => f.incoming);
+  }
+
+  /** Upstream header names that will be forwarded for the current request (names only, never values). */
+  presentForwardedHeaders(): string[] {
+    const headers = currentRequestContext()?.headers;
+    if (!headers) return [];
+    return this.forward.filter((f) => headers.has(f.incoming)).map((f) => f.upstream);
+  }
+
+  private get onMissing(): "error" | "omit" {
+    return this.config.transport === "http" ? this.config.onMissingForwardedHeader : "error";
+  }
+
+  /**
+   * Get this upstream ready to serve the current downstream request: connect an idle `onDemand`
+   * upstream (with the request's forwarded headers), or re-list tools a change notification marked
+   * stale. Concurrent first requests share one connect.
+   *
+   * @throws The connect / `tools/list` error, e.g. an HTTP 401 (see {@link isAuthFailure}).
+   */
+  async prepareForRequest(): Promise<void> {
+    // Plain upstreams keep today's behaviour exactly: nothing to prepare per request.
+    if (this.connectMode !== "onDemand" && this.forward.length === 0) return;
+    // A connect in flight (ours or another request's) is "connected" before its first tools/list
+    // has landed; wait for the whole of it, not just the state flip.
+    while (this.connecting) await this.connecting.catch(() => undefined);
+    if (this.isConnected()) {
+      if (!this.toolsStale) return;
+      this.toolsStale = false;
+      try {
+        await this.refreshTools(true);
+      } catch (err) {
+        this.toolsStale = true;
+        this.lastErrorMessage = this.errorMessage(err);
+        throw err;
+      }
+      return;
+    }
+    if (this.connectMode !== "onDemand") return;
+    await this.connect();
+  }
+
+  /**
+   * A message for an upstream failure that is safe to log, audit, or return: an HTTP 401 is named as
+   * an authentication failure, and any forwarded header value is scrubbed out.
+   */
+  errorMessage(err: unknown): string {
+    if (isAuthFailure(err)) {
+      return `authentication failed: "${this.name}" answered HTTP 401 Unauthorized to the credentials it was sent`;
+    }
+    return this.scrub((err as Error)?.message ?? String(err));
+  }
+
+  /** Record a failure from a tool call as this upstream's last error; returns the safe message. */
+  noteFailure(err: unknown): string {
+    this.lastErrorMessage = this.errorMessage(err);
+    return this.lastErrorMessage;
+  }
+
+  /** Remove the current request's forwarded header values from `text`. */
+  private scrub(text: string): string {
+    const headers = currentRequestContext()?.headers;
+    if (!headers) return text;
+    let out = text;
+    for (const { incoming } of this.forward) {
+      const value = headers.get(incoming);
+      if (value && value.length >= 4) out = out.split(value).join("[redacted]");
+    }
+    return out;
+  }
+
+  /**
+   * The `fetch` given to the HTTP transport when `forwardHeaders` is configured. It runs at send
+   * time inside the async context of whichever downstream request caused the send, so it reads that
+   * request's headers and no other. Outside a request only the static `headers` are sent.
+   */
+  private readonly forwardingFetch: FetchLike = (url, init) => {
+    const ctx = currentRequestContext();
+    if (!ctx) return fetch(url, init);
+    const headers = new Headers(init?.headers);
+    const missing: string[] = [];
+    for (const { upstream, incoming } of this.forward) {
+      const value = ctx.headers.get(incoming);
+      if (value !== undefined) headers.set(upstream, value);
+      else if (this.onMissing === "error") missing.push(incoming);
+    }
+    // Backstop for every path (connect, list, call, ping): nothing is sent without the identity.
+    if (missing.length > 0) {
+      return Promise.reject(new MissingForwardedHeaderError(this.name, missing));
+    }
+    return fetch(url, { ...init, headers });
+  };
 
   /**
    * Policed caching hints for this upstream's tool list (MCP 2026-07-28): never a longer TTL than
@@ -135,19 +293,22 @@ export class UpstreamConnection {
   /**
    * Authentication status:
    * - `null` for local stdio servers (not applicable);
-   * - `true`/`false` for HTTP servers, based on whether an auth header is configured.
+   * - `true`/`false` for HTTP servers, based on whether an auth header is configured: a standard
+   *   one, one named in `authHeaders`, or any `forwardHeaders` entry.
    */
   isAuthenticated(): boolean | null {
     if (this.config.transport !== "http") return null;
-    return headersCarryAuth(this.config.headers);
+    if (this.forward.length > 0) return true;
+    return headersCarryAuth(this.config.headers, this.authHeaderNames);
   }
 
   /** Construct the transport for this upstream's configured protocol. */
   private createTransport(): ClientTransport {
     if (this.config.transport === "http") {
-      const options = this.config.headers
-        ? { requestInit: { headers: this.config.headers } }
-        : undefined;
+      const options = {
+        ...(this.config.headers ? { requestInit: { headers: this.config.headers } } : {}),
+        ...(this.forward.length > 0 ? { fetch: this.forwardingFetch } : {}),
+      };
       return new StreamableHTTPClientTransport(new URL(this.config.url), options);
     }
     return new StdioClientTransport({
@@ -167,6 +328,17 @@ export class UpstreamConnection {
    * @throws The underlying transport/connect error on failure.
    */
   async connect(): Promise<void> {
+    const attempt = this.establish();
+    this.connecting = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (this.connecting === attempt) this.connecting = undefined;
+    }
+  }
+
+  /** One connect attempt: transport, handshake, first `tools/list`. */
+  private async establish(): Promise<void> {
     this.closedByRequest = false;
     this.connectionState = this.reconnectAttempts > 0 ? "reconnecting" : "connecting";
 
@@ -188,7 +360,7 @@ export class UpstreamConnection {
     const transport = this.createTransport();
     transport.onclose = () => this.handleUnexpectedClose();
     transport.onerror = (err: Error) => {
-      this.lastErrorMessage = err?.message ?? String(err);
+      this.lastErrorMessage = this.errorMessage(err);
       logger.warn({ server: this.name, err: this.lastErrorMessage }, "upstream transport error");
     };
 
@@ -212,9 +384,15 @@ export class UpstreamConnection {
     // tool call. A raw notification handler is used (not the SDK's list-diffing option) because a
     // rug pull changes a *description*, not the set of names.
     client.setNotificationHandler("notifications/tools/list_changed", () => {
-      void this.refreshTools(true).catch((err) =>
+      // A forwarding upstream is re-listed on the next downstream request, under that request's
+      // identity; a background re-list would carry no identity (or a stale one).
+      if (this.forward.length > 0) {
+        this.toolsStale = true;
+        return;
+      }
+      void runOutsideRequest(() => this.refreshTools(true)).catch((err) =>
         logger.warn(
-          { server: this.name, err: (err as Error)?.message ?? String(err) },
+          { server: this.name, err: this.errorMessage(err) },
           "failed to refresh tools after list_changed",
         ),
       );
@@ -245,12 +423,20 @@ export class UpstreamConnection {
       );
       this.onChange();
     } catch (err) {
-      this.lastErrorMessage = (err as Error)?.message ?? String(err);
-      this.connectionState = "disconnected";
+      this.lastErrorMessage = this.errorMessage(err);
       this.client = null;
       this.transport = null;
       logger.error({ server: this.name, err: this.lastErrorMessage }, "upstream connect failed");
-      this.scheduleReconnect();
+      if (this.connectMode === "onDemand") {
+        // No reconnect timer: the next request that needs this upstream connects it, with its own
+        // identity. A 401 in particular must not turn into a retry storm.
+        this.connectionState = "idle";
+        this.closedByRequest = true;
+        await client.close().catch(() => undefined);
+      } else {
+        this.connectionState = "disconnected";
+        this.scheduleReconnect();
+      }
       throw err;
     }
   }
@@ -263,6 +449,8 @@ export class UpstreamConnection {
    * @returns `true` if the upstream responded in time, otherwise `false`.
    */
   async healthCheck(timeoutMs: number): Promise<boolean> {
+    // An on-demand upstream is only ever reached with a caller's identity; a timer has none.
+    if (this.connectMode === "onDemand") return this.isConnected();
     if (!this.isConnected() || !this.client) return false;
     try {
       await withTimeout(this.client.ping(), timeoutMs, "ping timeout");
@@ -336,7 +524,7 @@ export class UpstreamConnection {
     }
     this.client = null;
     this.transport = null;
-    if (requested) this.connectionState = "disconnected";
+    if (requested) this.connectionState = this.connectMode === "onDemand" ? "idle" : "disconnected";
   }
 
   /**
@@ -399,12 +587,23 @@ export class UpstreamConnection {
   private handleUnexpectedClose(): void {
     if (this.closedByRequest) return;
     // Ignore spurious closes once we're already tearing down / retrying.
-    if (this.connectionState === "disconnected" || this.connectionState === "reconnecting") return;
+    if (
+      this.connectionState === "disconnected" ||
+      this.connectionState === "reconnecting" ||
+      this.connectionState === "idle"
+    ) {
+      return;
+    }
 
     logger.warn({ server: this.name }, "upstream disconnected unexpectedly");
-    this.connectionState = "disconnected";
     this.client = null;
     this.transport = null;
+    if (this.connectMode === "onDemand") {
+      this.connectionState = "idle";
+      this.onChange();
+      return;
+    }
+    this.connectionState = "disconnected";
     this.onChange();
     this.scheduleReconnect();
   }
@@ -438,7 +637,8 @@ export class UpstreamConnection {
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
-      void this.connect().catch(() => {
+      // Never inherit the identity of the request whose failure scheduled this retry.
+      void runOutsideRequest(() => this.connect()).catch(() => {
         // connect() already scheduled the next attempt on failure.
       });
     }, delay);

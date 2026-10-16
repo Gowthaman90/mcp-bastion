@@ -4,9 +4,12 @@
  * @packageDocumentation
  */
 
-/** Lifecycle state of a single upstream connection. */
+/**
+ * Lifecycle state of a single upstream connection. `idle` is an `onDemand` upstream that is not
+ * connected and waits for the next request that needs it.
+ */
 export type ConnectionState =
-  "connecting" | "connected" | "disconnected" | "reconnecting" | "failed";
+  "idle" | "connecting" | "connected" | "disconnected" | "reconnecting" | "failed";
 
 /** A point-in-time health snapshot of one upstream, as surfaced by `bastion__status`. */
 export interface ServerStatus {
@@ -20,12 +23,12 @@ export interface ServerStatus {
   transport: "stdio" | "http";
   /**
    * Authentication status: `null` for local stdio servers (N/A), otherwise
-   * whether an HTTP upstream is configured with an auth header.
+   * whether an HTTP upstream is configured with an auth header (static, `authHeaders`, or forwarded).
    */
   authenticated: boolean | null;
   /** Number of tools last advertised by this upstream. */
   tools: number;
-  /** Most recent error message, or `null` if none. */
+  /** Most recent error message, or `null` if none. Never contains a forwarded header value. */
   lastError: string | null;
 }
 

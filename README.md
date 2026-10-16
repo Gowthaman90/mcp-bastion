@@ -48,6 +48,7 @@ your servers run unchanged, and removing Bastion is a one-line config revert.
 - [Control tools](#control-tools)
 - [Configuration](#configuration)
 - [Transports](#transports)
+- [Per-user identity (gateway mode)](#per-user-identity-gateway-mode)
 - [Runtime security](#runtime-security)
 - [Audit & compliance](#audit--compliance)
 - [Client setup](#client-setup)
@@ -186,43 +187,47 @@ only standard MCP calls:
 
 ## Configuration
 
-| Key                               | Type                           | Default              | Description                                                                            |
-| --------------------------------- | ------------------------------ | -------------------- | -------------------------------------------------------------------------------------- |
-| `servers`                         | map                            | —                    | Upstream servers to proxy (required, at least one).                                    |
-| `servers.<name>.command`          | string                         | —                    | Executable to launch (e.g. `npx`, `node`).                                             |
-| `servers.<name>.args`             | string[]                       | `[]`                 | Arguments to `command`.                                                                |
-| `servers.<name>.env`              | map                            | —                    | Env overrides merged over the process env.                                             |
-| `servers.<name>.cwd`              | string                         | —                    | Working directory for the spawned process.                                             |
-| `reconnect.auto`                  | boolean                        | `true`               | Auto-reconnect after an unexpected disconnect.                                         |
-| `reconnect.maxRetries`            | number                         | `10`                 | Max attempts before giving up (`-1` = unlimited).                                      |
-| `reconnect.initialBackoffMs`      | number                         | `500`                | Initial backoff, doubled each attempt.                                                 |
-| `reconnect.maxBackoffMs`          | number                         | `30000`              | Backoff ceiling.                                                                       |
-| `healthCheck.enabled`             | boolean                        | `true`               | Enable periodic liveness probing.                                                      |
-| `healthCheck.intervalMs`          | number                         | `30000`              | Interval between probes.                                                               |
-| `healthCheck.timeoutMs`           | number                         | `5000`               | Per-probe timeout.                                                                     |
-| `namespace.strategy`              | `prefix` \| `passthrough`      | `prefix`             | How upstream tool names are exposed.                                                   |
-| `namespace.separator`             | string                         | `__`                 | Separator used by the `prefix` strategy.                                               |
-| `security.pinTools`               | boolean                        | `true`               | Pin tool definitions and detect later changes.                                         |
-| `security.onRugPull`              | `block` \| `warn`              | `block`              | Action when a pinned tool's definition changed.                                        |
-| `security.inspectDescriptions`    | boolean                        | `true`               | Run poisoning heuristics on tool descriptions.                                         |
-| `security.onPoisoning`            | `block` \| `warn`              | `warn`               | Action on a high-severity poisoning finding.                                           |
-| `audit.enabled`                   | boolean                        | `false`              | Record an audit event for every tool call.                                             |
-| `audit.includeArgs`               | `none`\|`redacted`\|`full`     | `none`               | How tool arguments are recorded.                                                       |
-| `audit.tamperEvident`             | boolean                        | `false`              | Hash-chain events so tampering is detectable.                                          |
-| `audit.sinks`                     | array                          | console              | Destinations: `console`, `file`, `webhook`, `otlp`.                                    |
-| `servers.<name>.transport`        | `stdio` \| `http`              | `stdio`              | Local subprocess or remote endpoint.                                                   |
-| `servers.<name>.url`              | string                         | —                    | Remote MCP URL (required for `http`).                                                  |
-| `servers.<name>.headers`          | map                            | —                    | Headers for `http` upstreams (e.g. `Authorization`).                                   |
-| `listen.mode`                     | `stdio` \| `http`              | `stdio`              | Serve Bastion over stdio or Streamable HTTP.                                           |
-| `listen.host` / `listen.port`     | string / number                | `127.0.0.1` / `3000` | Bind address for `http` mode.                                                          |
-| `listen.validateRoutingHeaders`   | boolean                        | `true`               | Reject `Mcp-*` routing headers that disagree with the body (`-32020`, MCP 2026-07-28). |
-| `security.maxCacheTtlMs`          | number (ms)                    | `3600000`            | Ceiling on upstream `ttlMs` cache hints forwarded downstream (MCP 2026-07-28).         |
-| `servers.<name>.protocol`         | `auto`\|`legacy`\|`2026-07-28` | `auto`               | Era negotiation per upstream (probe 2026-07-28, fall back; or pin).                    |
-| `listen.legacy`                   | `stateless` \| `reject`        | `stateless`          | Serve pre-2026-07-28 clients statelessly, or refuse them (`-32022`).                   |
-| `security.inspectInputRequests`   | boolean                        | `true`               | Gate `input_required` rounds (credential phishing, model steering).                    |
-| `security.onInputRequired`        | `block` \| `warn`              | `block`              | Action on a high-severity MRTR finding (`warn` strips the request).                    |
-| `security.requestStateKey`        | string (≥16)                   | random per process   | HMAC key sealing `requestState` envelopes; or `MCP_BASTION_REQUEST_STATE_KEY`.         |
-| `security.requestStateTtlSeconds` | number                         | `300`                | Lifetime of a sealed `requestState` envelope.                                          |
+| Key                                       | Type                           | Default              | Description                                                                                                     |
+| ----------------------------------------- | ------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `servers`                                 | map                            | —                    | Upstream servers to proxy (required, at least one).                                                             |
+| `servers.<name>.command`                  | string                         | —                    | Executable to launch (e.g. `npx`, `node`).                                                                      |
+| `servers.<name>.args`                     | string[]                       | `[]`                 | Arguments to `command`.                                                                                         |
+| `servers.<name>.env`                      | map                            | —                    | Env overrides merged over the process env.                                                                      |
+| `servers.<name>.cwd`                      | string                         | —                    | Working directory for the spawned process.                                                                      |
+| `reconnect.auto`                          | boolean                        | `true`               | Auto-reconnect after an unexpected disconnect.                                                                  |
+| `reconnect.maxRetries`                    | number                         | `10`                 | Max attempts before giving up (`-1` = unlimited).                                                               |
+| `reconnect.initialBackoffMs`              | number                         | `500`                | Initial backoff, doubled each attempt.                                                                          |
+| `reconnect.maxBackoffMs`                  | number                         | `30000`              | Backoff ceiling.                                                                                                |
+| `healthCheck.enabled`                     | boolean                        | `true`               | Enable periodic liveness probing.                                                                               |
+| `healthCheck.intervalMs`                  | number                         | `30000`              | Interval between probes.                                                                                        |
+| `healthCheck.timeoutMs`                   | number                         | `5000`               | Per-probe timeout.                                                                                              |
+| `namespace.strategy`                      | `prefix` \| `passthrough`      | `prefix`             | How upstream tool names are exposed.                                                                            |
+| `namespace.separator`                     | string                         | `__`                 | Separator used by the `prefix` strategy.                                                                        |
+| `security.pinTools`                       | boolean                        | `true`               | Pin tool definitions and detect later changes.                                                                  |
+| `security.onRugPull`                      | `block` \| `warn`              | `block`              | Action when a pinned tool's definition changed.                                                                 |
+| `security.inspectDescriptions`            | boolean                        | `true`               | Run poisoning heuristics on tool descriptions.                                                                  |
+| `security.onPoisoning`                    | `block` \| `warn`              | `warn`               | Action on a high-severity poisoning finding.                                                                    |
+| `audit.enabled`                           | boolean                        | `false`              | Record an audit event for every tool call.                                                                      |
+| `audit.includeArgs`                       | `none`\|`redacted`\|`full`     | `none`               | How tool arguments are recorded.                                                                                |
+| `audit.tamperEvident`                     | boolean                        | `false`              | Hash-chain events so tampering is detectable.                                                                   |
+| `audit.sinks`                             | array                          | console              | Destinations: `console`, `file`, `webhook`, `otlp`.                                                             |
+| `servers.<name>.transport`                | `stdio` \| `http`              | `stdio`              | Local subprocess or remote endpoint.                                                                            |
+| `servers.<name>.url`                      | string                         | —                    | Remote MCP URL (required for `http`).                                                                           |
+| `servers.<name>.headers`                  | map                            | —                    | Headers for `http` upstreams (e.g. `Authorization`).                                                            |
+| `servers.<name>.forwardHeaders`           | map                            | —                    | `http` only. Upstream header ← incoming header, copied per request (gateway mode). Needs `listen.mode: "http"`. |
+| `servers.<name>.onMissingForwardedHeader` | `error` \| `omit`              | `error`              | When a request lacks a forwarded header: answer a tool error without calling the upstream, or call it without.  |
+| `servers.<name>.connect`                  | `startup` \| `onDemand`        | `startup`            | `onDemand`: connect on the first request that needs this upstream, with that request's forwarded headers.       |
+| `servers.<name>.authHeaders`              | string[]                       | —                    | Extra header names that count as authentication in `bastion__status` (`forwardHeaders` keys always count).      |
+| `listen.mode`                             | `stdio` \| `http`              | `stdio`              | Serve Bastion over stdio or Streamable HTTP.                                                                    |
+| `listen.host` / `listen.port`             | string / number                | `127.0.0.1` / `3000` | Bind address for `http` mode.                                                                                   |
+| `listen.validateRoutingHeaders`           | boolean                        | `true`               | Reject `Mcp-*` routing headers that disagree with the body (`-32020`, MCP 2026-07-28).                          |
+| `security.maxCacheTtlMs`                  | number (ms)                    | `3600000`            | Ceiling on upstream `ttlMs` cache hints forwarded downstream (MCP 2026-07-28).                                  |
+| `servers.<name>.protocol`                 | `auto`\|`legacy`\|`2026-07-28` | `auto`               | Era negotiation per upstream (probe 2026-07-28, fall back; or pin).                                             |
+| `listen.legacy`                           | `stateless` \| `reject`        | `stateless`          | Serve pre-2026-07-28 clients statelessly, or refuse them (`-32022`).                                            |
+| `security.inspectInputRequests`           | boolean                        | `true`               | Gate `input_required` rounds (credential phishing, model steering).                                             |
+| `security.onInputRequired`                | `block` \| `warn`              | `block`              | Action on a high-severity MRTR finding (`warn` strips the request).                                             |
+| `security.requestStateKey`                | string (≥16)                   | random per process   | HMAC key sealing `requestState` envelopes; or `MCP_BASTION_REQUEST_STATE_KEY`.                                  |
+| `security.requestStateTtlSeconds`         | number                         | `300`                | Lifetime of a sealed `requestState` envelope.                                                                   |
 
 ## Transports
 
@@ -240,7 +245,67 @@ Bastion speaks two transports on **both** faces:
   (`listen.mode: "http"`, or `--http <port>`).
 
 HTTP upstreams configured without an authentication header are flagged (`authenticated: false`) in
-`bastion__status` and warned at connect time.
+`bastion__status` and warned at connect time. A custom credential header counts once it is named in
+`authHeaders`; a forwarded header always counts.
+
+## Per-user identity (gateway mode)
+
+When Bastion sits between an agent and sub-agents that must act **as the signed-in user**, each
+upstream call has to carry that user's identity, not one fixed token. `forwardHeaders` does this:
+
+```jsonc
+{
+  "servers": {
+    "pfqa": {
+      "transport": "http",
+      "url": "http://localhost:8011/mcp",
+      "protocol": "legacy",
+      "connect": "onDemand",
+      "forwardHeaders": { "x-cso-identity": "x-cso-delegate-pfqa" },
+    },
+  },
+  "listen": { "mode": "http" },
+}
+```
+
+The map reads _upstream header ← incoming header_. For every upstream request made while serving a
+downstream HTTP request (`initialize`, `tools/list`, `tools/call`, `ping`), Bastion copies the value of
+the incoming `x-cso-delegate-pfqa` header onto the upstream request as `x-cso-identity`.
+
+**Bastion holds no credential in this mode. It only passes on what each request carries.**
+
+- **Bound to the request.** The incoming headers live in an `AsyncLocalStorage` for exactly the
+  lifetime of one downstream request. A custom `fetch` on the upstream transport reads them at send
+  time. Concurrent requests from different users share one upstream connection but never see each
+  other's headers.
+- **Only listed headers travel.** No other incoming header is forwarded. Hop-by-hop and
+  transport-owned headers (`connection`, `mcp-session-id`, `content-type`, …) are rejected as forward
+  targets at config load. While `listen.authToken` is set, the incoming `authorization` header (Bastion's
+  own bearer token) cannot be forwarded.
+- **A forwarded header overrides a static `headers` entry** of the same name.
+- **Missing header.** By default (`onMissingForwardedHeader: "error"`) the upstream is not called. The
+  caller gets a tool error such as
+  `pfqa: the request carried no x-cso-delegate-pfqa header, so the call was not forwarded.`
+  Use `"omit"` to call the upstream anyway and let it decide.
+- **On-demand connection.** With `connect: "onDemand"`, nothing is sent at start-up. The first request
+  that needs the upstream (`tools/list`, or a direct `tools/call` of `pfqa__…`) connects it with that
+  request's headers. The tool list is then cached as usual. Health checks skip on-demand upstreams,
+  which show as `idle` until first used. A failed connect returns to `idle` with no reconnect timer.
+  `connect: "startup"` with `forwardHeaders` connects at boot with the static `headers` only, so use
+  `onDemand` when the upstream authenticates `initialize` too.
+- **401 is an authentication failure.** It is reported as such in the tool result and in
+  `bastion__status` (`lastError`), never as a crash or an unknown tool. One user's 401 does not tear down
+  the connection other users share.
+- **Values are never recorded.** Logs, audit sinks and `bastion__status` never contain a forwarded
+  value. Audit events record only which headers were forwarded (`"forwardedHeaders": ["x-cso-identity"]`).
+- **Pinning is shared.** Tool definitions are pinned on first sight and a change is blocked, whichever
+  user's request saw it. Only the identity is per request.
+
+`forwardHeaders`, `onMissingForwardedHeader`, `connect` and `authHeaders` are valid only on
+`transport: "http"` upstreams. `forwardHeaders` also needs `listen.mode: "http"`. Other combinations
+are rejected at config load. See
+[`examples/identity-forwarding.config.json`](examples/identity-forwarding.config.json) for three
+sub-agents behind one Bastion.
 
 ## Runtime security
 

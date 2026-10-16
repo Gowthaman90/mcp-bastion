@@ -121,6 +121,7 @@ export class AuditEngine {
       findings: ctx.findings?.map((f) => ({ rule: f.rule, severity: f.severity })),
       frameworks: frameworksFor(decision, ctx.findings ?? []),
       args: prepareArgs(ctx.args, this.config.includeArgs, this.config.redactKeys),
+      ...(ctx.forwardedHeaders?.length ? { forwardedHeaders: [...ctx.forwardedHeaders] } : {}),
     };
 
     let event: AuditEvent = core;

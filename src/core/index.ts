@@ -11,6 +11,12 @@ export {
   controlToolName,
 } from "./constants.js";
 export type { ConnectionState, ServerStatus, ReconnectResult, ToolRoute } from "./types.js";
-export { UpstreamConnection } from "./upstream-connection.js";
+export { isAuthFailure, UpstreamConnection } from "./upstream-connection.js";
+export {
+  currentRequestContext,
+  runOutsideRequest,
+  runWithRequestHeaders,
+} from "./request-context.js";
+export type { RequestContext } from "./request-context.js";
 export type { UpstreamChangeListener } from "./upstream-connection.js";
 export { UpstreamManager } from "./upstream-manager.js";

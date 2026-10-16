@@ -57,6 +57,11 @@ export interface AuditEvent {
   frameworks: FrameworkMapping;
   /** Tool arguments — omitted, redacted, or full per `audit.includeArgs`. */
   args?: Record<string, unknown>;
+  /**
+   * Upstream header names forwarded from the caller's request (gateway mode), e.g.
+   * `["x-cso-identity"]`. Records that an identity was carried, never its value.
+   */
+  forwardedHeaders?: string[];
   /** Previous event's hash (present only when tamper-evidence is enabled). */
   prevHash?: string;
   /** This event's hash over its content + `prevHash` (tamper-evidence). */

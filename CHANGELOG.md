@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+Per-user identity forwarding (gateway mode), so one Bastion can sit between an agent and sub-agents
+that must each run as the signed-in user.
+
+- **`servers.<name>.forwardHeaders`** (HTTP upstreams, `listen.mode: "http"`): a map of upstream header
+  ← incoming header. For each upstream request made while serving a downstream request (`initialize`,
+  `tools/list`, `tools/call`, `ping`), the incoming value is sent under the upstream name. Values are bound
+  to their request with `AsyncLocalStorage` and merged in by a custom `fetch` on the upstream transport,
+  so concurrent users sharing one connection never see each other's headers. Only listed headers are
+  forwarded; a forwarded header overrides a static one; hop-by-hop and transport-owned targets are
+  rejected at config load. Bastion holds no credential of its own in this mode.
+- **`servers.<name>.onMissingForwardedHeader`**: `error` (default) answers a tool error and never calls
+  the upstream; `omit` calls it without the header.
+- **`servers.<name>.connect: "onDemand"`**: no connection at start-up; the first request that needs the
+  upstream connects it with that request's headers. Health checks skip such upstreams (state `idle`); a
+  failed connect goes back to `idle` with no reconnect timer.
+- **`servers.<name>.authHeaders`**: extra header names that count as authentication. `forwardHeaders`
+  keys count automatically, so `bastion__status` reports `authenticated: true` and the connect-time
+  warning no longer fires.
+- An upstream **HTTP 401** is reported as an authentication failure in the tool result and in
+  `bastion__status` `lastError`, not as a generic failure or an unknown tool. One caller's 401 does not
+  tear down the shared connection.
+- Forwarded values never appear in logs, audit sinks or `bastion__status`. Audit events gain an optional
+  `forwardedHeaders` field listing the forwarded header **names**.
+- New public exports: `MissingForwardedHeaderError`; on the core layer, `runWithRequestHeaders`,
+  `currentRequestContext`, `runOutsideRequest` and `isAuthFailure`. `ConnectionState` gains `idle`.
+- No change for existing configs: `connect` defaults to `startup` and nothing is forwarded unless listed.
+
 ## [1.1.0] - 2026-09-30
 
 Human-oversight gaps (the EU AI Act Art. 14 set in mcp-defense-bench v0.8.0: three of its seven vectors

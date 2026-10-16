@@ -54,6 +54,8 @@ export interface ToolCallContext {
   requestState?: string;
   /** Findings on the embedded requests of an `input_required` result. */
   mrtrFindings?: SecurityFinding[];
+  /** Upstream header names forwarded from the downstream request (gateway mode). Names only. */
+  forwardedHeaders?: string[];
 
   // --- Annotations populated by interceptors for downstream observers (e.g. audit) ---
 

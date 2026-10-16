@@ -32,3 +32,18 @@ export class UpstreamDisconnectedError extends BastionError {
     super(`Upstream server "${server}" is disconnected`);
   }
 }
+
+/**
+ * Raised (before anything is sent) when an upstream request would need a forwarded header that the
+ * downstream request did not carry, under `onMissingForwardedHeader: "error"`.
+ */
+export class MissingForwardedHeaderError extends BastionError {
+  constructor(
+    public readonly server: string,
+    public readonly missing: readonly string[],
+  ) {
+    super(
+      `${server}: the request carried no ${missing.join(" or ")} header, so the call was not forwarded.`,
+    );
+  }
+}
