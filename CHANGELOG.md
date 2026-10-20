@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-20
+
 Shadow-mode (`enforcementProfile: "observe"`) audit events now show everything enforcement would have
 acted on, so a pilot can report what `balanced` would have blocked. All audit changes are additive;
 `AUDIT_SCHEMA_VERSION` stays `1`.
@@ -27,6 +29,14 @@ acted on, so a pilot can report what `balanced` would have blocked. All audit ch
 - **Changed:** the rug-pull block message no longer tells the agent to call `bastion__approve`, a tool it
   is not offered and cannot use. It now says to ask an operator to review the change and re-approve.
 - New exports: `SecurityDecision` (type) and `DelegationCheck.wouldBlock`.
+- **Security (dependencies):** `@modelcontextprotocol/client`, `core` and `server` to 2.3.1 and `node` to
+  2.1.1, for [GHSA-6qxp-vccf-f47h](https://github.com/advisories/GHSA-6qxp-vccf-f47h) (the SDK's OAuth
+  client could send credentials to an authorization server chosen by the MCP server). Bastion does not use
+  the SDK OAuth client, so the flaw was not reachable, but the advisory sat on the runtime tree. Transitive
+  `hono` / `@hono/node-server` advisories are cleared too; `npm audit --omit=dev` is clean.
+- Dev: `vitest` 2 → 4.1.12 (not 5, which drops Node 20) and `@modelcontextprotocol/sdk` 1.32.1.
+- **Fixed:** `npm run demo` crashed since 1.2.0 (`security.requestStateKey` of undefined) because it built
+  its config by hand. It now parses the config through `BastionConfigSchema`, as the CLI does.
 
 ## [1.2.0] - 2026-10-16
 
