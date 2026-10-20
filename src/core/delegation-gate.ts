@@ -14,6 +14,7 @@ import type { JSONWebKeySet } from "jose";
 
 import type { AuditDelegationRecord } from "../audit/types.js";
 import type { BastionConfig } from "../config/index.js";
+import { ENFORCEMENT_PROFILES } from "../config/schema.js";
 import {
   checkDelegation,
   checkDelegationAsync,
@@ -41,6 +42,8 @@ export interface DelegationCheck {
   findings: DelegationFinding[];
   /** The subset that blocks under the enforcement settings (rule ids). */
   blocking: DelegationRule[];
+  /** Whether a finding the configured actions let through would block under the `balanced` profile. */
+  wouldBlock: boolean;
   /** The audit record, when the request carried a token for this upstream or a finding applies. */
   record?: AuditDelegationRecord;
 }
@@ -207,9 +210,18 @@ export class DelegationGate {
       this.lastViolation.set(server, { rule: first.rule, at: new Date().toISOString() });
     }
     const carried = server in verdict.result.perUpstream;
+    const blocking = verdict.blocked.get(server) ?? [];
     return {
       findings,
-      blocking: verdict.blocked.get(server) ?? [],
+      blocking,
+      wouldBlock:
+        blocking.length === 0 &&
+        findings.some(
+          (f) =>
+            ENFORCEMENT_PROFILES.balanced[
+              DELEGATION_CHAIN_RULES.has(f.rule) ? "onDelegationChain" : "onDelegation"
+            ] === "block",
+        ),
       ...(carried || findings.length > 0 ? { record: this.record(verdict, server, findings) } : {}),
     };
   }

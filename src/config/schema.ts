@@ -393,7 +393,7 @@ const OnAction = z.enum(["block", "warn"]);
  * (description poisoning, response-content heuristics). An explicit `on*` value always overrides the
  * profile.
  */
-const ENFORCEMENT_PROFILES = {
+export const ENFORCEMENT_PROFILES = {
   observe: {
     onInputRequired: "warn",
     onRugPull: "warn",

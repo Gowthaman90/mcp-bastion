@@ -38,6 +38,18 @@ export interface ToolSecurityReport {
   shadowedBy: string[];
 }
 
+/** The decision a security check records when it blocks a call. */
+export type SecurityDecision =
+  | "blocked_rug_pull"
+  | "blocked_poisoning"
+  | "blocked_response"
+  | "blocked_schema"
+  | "blocked_identity"
+  | "blocked_dataflow"
+  | "blocked_input_required"
+  | "blocked_request_state"
+  | "blocked_delegation";
+
 /** Context passed through the interceptor pipeline for a single tool call. */
 export interface ToolCallContext {
   /** Owning upstream server name. */
@@ -72,16 +84,12 @@ export interface ToolCallContext {
   /** Number of secret values redacted from the tool's result by inline DLP (0/undefined = none). */
   redactedSecrets?: number;
   /** Set by a security interceptor when it blocks the call. */
-  securityDecision?:
-    | "blocked_rug_pull"
-    | "blocked_poisoning"
-    | "blocked_response"
-    | "blocked_schema"
-    | "blocked_identity"
-    | "blocked_dataflow"
-    | "blocked_input_required"
-    | "blocked_request_state"
-    | "blocked_delegation";
+  securityDecision?: SecurityDecision;
+  /**
+   * Set when a check found a problem but its action was `warn`, and the `balanced` profile would
+   * have blocked the call with this decision (shadow mode). The first such check wins.
+   */
+  wouldBlock?: SecurityDecision;
 }
 
 /** Continuation that invokes the next interceptor (or the upstream call). */

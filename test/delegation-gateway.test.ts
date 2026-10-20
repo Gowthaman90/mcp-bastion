@@ -89,7 +89,7 @@ async function client(url: string, headers: Record<string, string>): Promise<Cli
   return c;
 }
 
-async function startGateway(): Promise<{
+async function startGateway(extra: Record<string, unknown> = {}): Promise<{
   pfqa: UpstreamFixture;
   psqa: UpstreamFixture;
   mgr: UpstreamManager;
@@ -103,7 +103,7 @@ async function startGateway(): Promise<{
   );
   const mgr = new UpstreamManager(
     BastionConfigSchema.parse({
-      ...rawConfig(pfqa.url, psqa.url),
+      ...rawConfig(pfqa.url, psqa.url, extra),
       reconnect: { auto: false },
       healthCheck: { enabled: false },
     }),
@@ -192,6 +192,43 @@ describe("delegation checks in the gateway", () => {
     expect(pfqa.requests.some((q) => q.identity === token)).toBe(true);
     const status = mgr.status().find((s) => s.name === "pfqa")!;
     expect(status.delegation?.lastViolation?.rule).toBe("delegation-chain-depth");
+  });
+});
+
+describe("delegation checks in shadow mode ('observe')", () => {
+  it("lets a mixed-user request through and audits it as wouldBlock: blocked_delegation", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bastion-deleg-shadow-"));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    const auditPath = join(dir, "audit.jsonl");
+    const { pfqa, mgr, listener } = await startGateway({
+      security: { enforcementProfile: "observe" },
+      audit: { enabled: true, sinks: [{ type: "file", path: auditPath }] },
+    });
+
+    // Chain depth only: 'balanced' warns on it too, so no wouldBlock.
+    const act = { sub: "master-quote-agent", act: { sub: "planner", act: { sub: "helper" } } };
+    const deep = await client(listener.url, {
+      "x-cso-delegate-pfqa": delegate("pfqa", "user:priya", { act }),
+    });
+    expect((await deep.callTool({ name: "pfqa__whoami", arguments: {} })).isError).toBeFalsy();
+
+    // Two users in one request: 'balanced' would block this before any upstream contact.
+    const mixed = await client(listener.url, {
+      "x-cso-delegate-pfqa": delegate("pfqa", "user:priya"),
+      "x-cso-delegate-psqa": delegate("psqa", "user:raj"),
+    });
+    const res = await mixed.callTool({ name: "pfqa__whoami", arguments: {} });
+    expect(res.isError, textOf(res)).toBeFalsy();
+    expect(pfqa.requests.length).toBeGreaterThan(0);
+
+    await mgr.closeAll();
+    const events = (await readFile(auditPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { decision: string; wouldBlock?: string });
+    expect(events.map((e) => e.decision)).toEqual(["allowed", "allowed"]);
+    expect(events[0]).not.toHaveProperty("wouldBlock");
+    expect(events[1].wouldBlock).toBe("blocked_delegation");
   });
 });
 

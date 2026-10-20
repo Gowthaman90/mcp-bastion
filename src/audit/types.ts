@@ -78,8 +78,17 @@ export interface AuditEvent {
   decision: AuditDecision;
   outcome: AuditOutcome;
   durationMs: number;
-  /** Security findings on the tool's description, when any. */
+  /** Security findings on the call (definition, arguments and result), when any. */
   findings?: { rule: string; severity: Severity }[];
+  /** The subset of `findings` raised by scanning the tool's result, when any. */
+  responseFindings?: { rule: string; severity: Severity }[];
+  /** Number of secret values inline DLP redacted from the tool's result, when any. */
+  redactedSecrets?: number;
+  /**
+   * The decision the `balanced` profile would have recorded, on a call a `warn` action let through
+   * (e.g. under `enforcementProfile: "observe"`). Absent when no such check fired.
+   */
+  wouldBlock?: AuditDecision;
   frameworks: FrameworkMapping;
   /** Tool arguments — omitted, redacted, or full per `audit.includeArgs`. */
   args?: Record<string, unknown>;

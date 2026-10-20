@@ -12,6 +12,7 @@
 import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
 
 import type { SecurityConfig } from "../config/index.js";
+import { ENFORCEMENT_PROFILES } from "../config/schema.js";
 import { ControlAction, controlToolName } from "../core/constants.js";
 import { textResult } from "../internal/index.js";
 import { logger, type Logger } from "../observability/index.js";
@@ -26,7 +27,36 @@ import { checkInputRequests, isInputRequired, stripFlaggedInputRequests } from "
 import { hasSeverityAtLeast, scanText } from "./poisoning.js";
 import { validateArguments } from "./schema.js";
 import { ToolRegistry } from "./tool-registry.js";
-import type { Interceptor, SecurityFinding, ToolCallOutcome, ToolSecurityReport } from "./types.js";
+import type {
+  Interceptor,
+  SecurityDecision,
+  SecurityFinding,
+  ToolCallContext,
+  ToolCallOutcome,
+  ToolSecurityReport,
+} from "./types.js";
+
+/** An `on*` action that an enforcement profile resolves. */
+type ProfileAction = keyof (typeof ENFORCEMENT_PROFILES)["balanced"];
+
+/**
+ * Record on `ctx` that the `balanced` profile would have blocked this call with `decision`. Called on
+ * the `warn` branch of a check, so a shadow-mode (`observe`) audit trail shows what enforcement would
+ * have done. The first such check wins, as it is the one that would have stopped the call.
+ */
+function noteWouldBlock(
+  ctx: ToolCallContext,
+  action: ProfileAction,
+  decision: SecurityDecision,
+): void {
+  if (ENFORCEMENT_PROFILES.balanced[action] === "block") ctx.wouldBlock ??= decision;
+}
+
+/** Append findings to `ctx`, skipping any an earlier interceptor already added (same object). */
+function addFindings(ctx: ToolCallContext, findings: readonly SecurityFinding[]): void {
+  const existing = ctx.findings ?? [];
+  ctx.findings = [...existing, ...findings.filter((f) => !existing.includes(f))];
+}
 
 /** Stringify tool-call arguments for heuristic scanning; never throws. */
 function safeStringify(args: unknown): string {
@@ -224,6 +254,7 @@ export class SecurityEngine {
           ),
         );
       }
+      noteWouldBlock(ctx, "onIdentityChange", "blocked_identity");
       return next();
     };
   }
@@ -234,26 +265,37 @@ export class SecurityEngine {
       const state = this.registry.state(ctx.server, ctx.toolName);
       if (state) {
         ctx.definitionHash = state.currentHash;
-        ctx.findings = [...state.findings];
+        addFindings(ctx, state.findings);
       }
       if (state?.status === "changed") {
+        // A finding, not just a log line, so the audit event records the rug pull even when the
+        // call goes ahead (`warn`, e.g. a shadow-mode pilot).
+        addFindings(ctx, [
+          {
+            rule: "tool-definition-changed",
+            severity: "high",
+            excerpt: `tool "${ctx.toolName}" on server "${ctx.server}" changed after it was first approved (possible rug pull)`,
+          },
+        ]);
         this.log.warn(
           { server: ctx.server, tool: ctx.toolName },
           "rug pull detected: tool definition changed after approval",
         );
         if (this.policy.onRugPull === "block") {
           ctx.securityDecision = "blocked_rug_pull";
+          // Re-approval is operator-only (never an agent-callable tool), so the agent is told to
+          // hand the review to a person rather than pointed at a tool it cannot use.
           return Promise.resolve(
             textResult(
               `Blocked by mcp-bastion: the definition of tool "${ctx.toolName}" on server ` +
-                `"${ctx.server}" changed after it was first approved (a possible "rug pull"). Review the ` +
-                `change, then call "${controlToolName(ControlAction.Approve, this.separator)}" with ` +
-                `{"server":"${ctx.server}","tool":"${ctx.toolName}"} to re-approve it, or ` +
+                `"${ctx.server}" changed after it was first approved (a possible "rug pull"). Ask an ` +
+                `operator to review the change and re-approve the tool. Call ` +
                 `"${controlToolName(ControlAction.Security, this.separator)}" to inspect.`,
               true,
             ),
           );
         }
+        noteWouldBlock(ctx, "onRugPull", "blocked_rug_pull");
       }
       return next();
     };
@@ -266,7 +308,7 @@ export class SecurityEngine {
       const findings = state?.findings ?? [];
       if (state) {
         ctx.definitionHash ??= state.currentHash;
-        ctx.findings ??= [...findings];
+        addFindings(ctx, findings);
       }
       if (findings.length > 0) {
         this.log.warn(
@@ -285,6 +327,9 @@ export class SecurityEngine {
               true,
             ),
           );
+        }
+        if (hasSeverityAtLeast(findings, "high")) {
+          noteWouldBlock(ctx, "onPoisoning", "blocked_poisoning");
         }
       }
       return next();
@@ -327,6 +372,7 @@ export class SecurityEngine {
           ),
         );
       }
+      noteWouldBlock(ctx, "onSchemaViolation", "blocked_schema");
       return next();
     };
   }
@@ -357,6 +403,7 @@ export class SecurityEngine {
             true,
           );
         }
+        noteWouldBlock(ctx, "onDataFlow", "blocked_dataflow");
       }
       const result = await next();
       if (!ctx.securityDecision) this.taint.record(ctx.server, [resultText(result), argText]);
@@ -447,6 +494,8 @@ export class SecurityEngine {
           true,
         );
       }
+      if (hasSeverityAtLeast(findings, "high"))
+        noteWouldBlock(ctx, "onResponse", "blocked_response");
       return complete;
     };
   }
@@ -479,6 +528,9 @@ export class SecurityEngine {
             `Set security.onInputRequired to "warn" if this is a false positive.`,
           true,
         );
+      }
+      if (hasSeverityAtLeast(findings, "high")) {
+        noteWouldBlock(ctx, "onInputRequired", "blocked_input_required");
       }
       const { result: stripped, removed } = stripFlaggedInputRequests(result, findings);
       if (removed.length > 0) {

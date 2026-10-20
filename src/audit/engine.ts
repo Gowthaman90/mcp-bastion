@@ -127,6 +127,16 @@ export class AuditEngine {
       outcome,
       durationMs,
       findings: ctx.findings?.map((f) => ({ rule: f.rule, severity: f.severity })),
+      ...(ctx.responseFindings?.length
+        ? {
+            responseFindings: ctx.responseFindings.map((f) => ({
+              rule: f.rule,
+              severity: f.severity,
+            })),
+          }
+        : {}),
+      ...(ctx.redactedSecrets ? { redactedSecrets: ctx.redactedSecrets } : {}),
+      ...(ctx.wouldBlock ? { wouldBlock: ctx.wouldBlock } : {}),
       frameworks: frameworksFor(decision, ctx.findings ?? []),
       args: prepareArgs(ctx.args, this.config.includeArgs, this.config.redactKeys),
       ...(ctx.forwardedHeaders?.length ? { forwardedHeaders: [...ctx.forwardedHeaders] } : {}),

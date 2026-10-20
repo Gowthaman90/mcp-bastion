@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+Shadow-mode (`enforcementProfile: "observe"`) audit events now show everything enforcement would have
+acted on, so a pilot can report what `balanced` would have blocked. All audit changes are additive;
+`AUDIT_SCHEMA_VERSION` stays `1`.
+
+- **Rug pulls are recorded as a finding.** A tool whose definition changed after approval now adds
+  `tool-definition-changed` (high) to the call's `findings`, whether the call is blocked or let through.
+  Before, a rug pull under `warn` was only logged to stderr.
+- **`AuditEvent.wouldBlock`** (optional): the decision the `balanced` profile would have recorded, set
+  when a check found a problem but its action was `warn`. Covers rug pull, identity change, argument
+  inspection, cross-server data flow, MRTR and delegation checks; the first such check wins. Heuristic
+  checks that `balanced` only warns on (description poisoning, response heuristics, delegation chain
+  depth) do not set it.
+- **`AuditEvent.responseFindings`** and **`AuditEvent.redactedSecrets`** (optional): the findings from
+  scanning the tool's result, and how many secret values inline DLP redacted from it. Both were computed
+  before but never written to the audit event.
+- **Fixed:** with `pinServerIdentity` on and the identity action at `warn`, the rug-pull check replaced
+  the call's findings, so the `server-identity-changed` finding never reached the audit event. Findings
+  from earlier checks are now kept.
+- **Changed:** the rug-pull block message no longer tells the agent to call `bastion__approve`, a tool it
+  is not offered and cannot use. It now says to ask an operator to review the change and re-approve.
+- New exports: `SecurityDecision` (type) and `DelegationCheck.wouldBlock`.
+
 ## [1.2.0] - 2026-10-16
 
 Per-user identity forwarding (gateway mode), so one Bastion can sit between an agent and sub-agents

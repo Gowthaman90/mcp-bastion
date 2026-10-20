@@ -85,6 +85,7 @@ export type {
   PinStatus,
   ToolSecurityReport,
   ToolCallContext,
+  SecurityDecision,
   Interceptor,
   NextFn,
 } from "./types.js";

@@ -311,8 +311,10 @@ export class UpstreamManager {
     };
     const forwarded = upstream.presentForwardedHeaders();
     if (forwarded.length > 0) ctx.forwardedHeaders = forwarded;
-    const delegated = this.delegation.check(route.server)?.record;
-    if (delegated) ctx.delegation = delegated;
+    const delegated = this.delegation.check(route.server);
+    if (delegated?.record) ctx.delegation = delegated.record;
+    // Warn-only delegation findings that `balanced` would have blocked (shadow mode).
+    if (delegated?.wouldBlock) ctx.wouldBlock = "blocked_delegation";
     try {
       // Security interceptors run first; the terminal step is the real upstream call.
       const outcome = await runPipeline(

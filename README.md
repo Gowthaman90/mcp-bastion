@@ -476,6 +476,10 @@ including calls blocked by the security layer:
   most-recent events links cleanly — so treat this as corruption-detection, **not** cryptographic
   tamper-proofing. For stronger guarantees, ship events to an append-only external sink (webhook / OTLP →
   a WORM store or SIEM). Keyed/signed attestation is on the roadmap.
+- **Shadow mode.** Under `security.enforcementProfile: "observe"` nothing is blocked, and each event
+  says what enforcement would have done: `wouldBlock` holds the decision the `balanced` profile would have
+  recorded (e.g. `blocked_rug_pull`), a rug pull appears in `findings` as `tool-definition-changed`, and
+  `responseFindings` / `redactedSecrets` record what the result scan and inline DLP found.
 - **Redaction (best-effort).** Arguments are omitted by default; `includeArgs: "redacted"` keeps structure
   while masking values under known credential key-names and common secret patterns. It is a heuristic, not
   a guarantee — a secret under an unrecognized key can still be recorded, so prefer `none` for
