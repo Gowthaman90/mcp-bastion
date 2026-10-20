@@ -9,7 +9,7 @@
 // It boots Bastion in front of a server that can crash on command, then shows
 // the agent detecting the outage and the connection self-healing.
 import { fileURLToPath } from "node:url";
-import { UpstreamManager } from "../dist/index.js";
+import { BastionConfigSchema, UpstreamManager } from "../dist/index.js";
 
 const crashable = fileURLToPath(new URL("../test/fixtures/crashable-server.mjs", import.meta.url));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -35,13 +35,16 @@ function printStatus(manager) {
 async function main() {
   console.log(c.bold("\n🛡️  mcp-bastion — kill-and-recover demo\n"));
 
-  const manager = new UpstreamManager({
-    servers: { demo: { transport: "stdio", command: process.execPath, args: [crashable] } },
-    // Deliberately slow backoff so the outage is visible in the recording.
-    reconnect: { auto: true, maxRetries: 20, initialBackoffMs: 2500, maxBackoffMs: 2500 },
-    healthCheck: { enabled: false, intervalMs: 30000, timeoutMs: 5000 },
-    namespace: { strategy: "prefix", separator: "__" },
-  });
+  // Parse through the schema, as the CLI does, so every section gets its defaults.
+  const manager = new UpstreamManager(
+    BastionConfigSchema.parse({
+      servers: { demo: { transport: "stdio", command: process.execPath, args: [crashable] } },
+      // Deliberately slow backoff so the outage is visible in the recording.
+      reconnect: { auto: true, maxRetries: 20, initialBackoffMs: 2500, maxBackoffMs: 2500 },
+      healthCheck: { enabled: false, intervalMs: 30000, timeoutMs: 5000 },
+      namespace: { strategy: "prefix", separator: "__" },
+    }),
+  );
 
   const connected = () => manager.status()[0].connected;
   const waitUntil = async (pred, timeoutMs) => {
