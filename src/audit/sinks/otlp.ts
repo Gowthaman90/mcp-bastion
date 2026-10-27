@@ -10,7 +10,7 @@
  * @packageDocumentation
  */
 import { BASTION_NAME, BASTION_VERSION } from "../../core/constants.js";
-import type { AuditEvent } from "../types.js";
+import type { AuditEvent, AuditRecord } from "../types.js";
 import { HttpBatchSink } from "./http-batch.js";
 
 export interface OtlpSinkOptions {
@@ -36,11 +36,33 @@ function toUnixNano(iso: string): string {
   return (BigInt(new Date(iso).getTime()) * 1_000_000n).toString();
 }
 
+/** A run-start or checkpoint record as an INFO log record (attributes carry the chain facts). */
+function chainRecordToOtlp(record: Exclude<AuditRecord, AuditEvent>): unknown {
+  const attributes = [
+    attr("audit.record_type", record.recordType),
+    attr("audit.run_id", record.runId),
+  ];
+  if (record.recordType === "checkpoint") {
+    attributes.push(
+      attr("audit.seq", record.seq),
+      attr("audit.head", record.head),
+      attr("audit.key_id", record.keyId),
+    );
+  }
+  return {
+    timeUnixNano: toUnixNano(record.ts),
+    severityNumber: 9,
+    severityText: "INFO",
+    body: { stringValue: JSON.stringify(record) },
+    attributes,
+  };
+}
+
 /**
  * Map audit events to an OTLP/HTTP logs JSON payload (resourceLogs → scopeLogs →
  * logRecords). Exported for testing.
  */
-export function toOtlpLogs(events: readonly AuditEvent[]): unknown {
+export function toOtlpLogs(records: readonly AuditRecord[]): unknown {
   return {
     resourceLogs: [
       {
@@ -48,7 +70,9 @@ export function toOtlpLogs(events: readonly AuditEvent[]): unknown {
         scopeLogs: [
           {
             scope: { name: BASTION_NAME, version: BASTION_VERSION },
-            logRecords: events.map((event) => {
+            logRecords: records.map((record) => {
+              if ("recordType" in record) return chainRecordToOtlp(record);
+              const event: AuditEvent = record;
               const isWarn = event.outcome !== "ok";
               const attributes: Array<{ key: string; value: unknown }> = [
                 attr("mcp.server", event.server),
@@ -99,7 +123,7 @@ export class OtlpSink extends HttpBatchSink {
     this.name = `otlp:${url}`;
   }
 
-  protected body(events: AuditEvent[]): unknown {
+  protected body(events: AuditRecord[]): unknown {
     return toOtlpLogs(events);
   }
 }

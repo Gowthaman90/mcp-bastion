@@ -12,6 +12,7 @@
 import { Command } from "commander";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
+import { auditKeygen, auditVerify } from "./audit-cli.js";
 import { loadConfig, defaultConfig } from "./config/index.js";
 import { BASTION_VERSION, UpstreamManager } from "./core/index.js";
 import { logger } from "./observability/index.js";
@@ -35,6 +36,40 @@ program
   )
   .option("--http <port>", "serve over Streamable HTTP on <port> (overrides listen.mode)")
   .action(run);
+
+const audit = program.command("audit").description("offline tools for Bastion audit logs");
+audit
+  .command("verify <log>")
+  .description(
+    "check an audit log's hash chain, seq continuity, signed checkpoints and run links (exit 0 intact, 1 tampered, 2 cannot verify)",
+  )
+  .option("--checkpoints <file>", "checkpoints from a separate witness sink (JSON lines)")
+  .option("--public-key <file>", "Ed25519 public key (PEM) the checkpoints are signed with")
+  .option(
+    "--key-env <var>",
+    "environment variable holding the chain's integrity key",
+    "MCP_BASTION_AUDIT_KEY",
+  )
+  .option("--json", "print the report as JSON")
+  .action(
+    (
+      log: string,
+      o: { checkpoints?: string; publicKey?: string; keyEnv?: string; json?: boolean },
+    ) => {
+      const { code, output } = auditVerify(log, o);
+      process.stdout.write(`${output}\n`);
+      process.exitCode = code;
+    },
+  );
+audit
+  .command("keygen")
+  .description("create an Ed25519 key pair for signed audit checkpoints")
+  .requiredOption("--out <dir>", "directory for checkpoint-private.pem and checkpoint-public.pem")
+  .action((o: { out: string }) => {
+    const { code, output } = auditKeygen(o.out);
+    process.stdout.write(`${output}\n`);
+    process.exitCode = code;
+  });
 
 program.parseAsync(process.argv).catch((err) => {
   logger.error({ err: (err as Error)?.stack ?? String(err) }, "fatal");

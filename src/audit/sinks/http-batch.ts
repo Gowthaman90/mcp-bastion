@@ -10,7 +10,7 @@
  * @packageDocumentation
  */
 import { logger } from "../../observability/index.js";
-import type { AuditEvent, AuditSink, SinkHealth } from "../types.js";
+import type { AuditRecord, AuditSink, SinkHealth } from "../types.js";
 
 export interface HttpBatchOptions {
   /** Full URL events are POSTed to. */
@@ -34,7 +34,7 @@ export function backoffMs(attempt: number, random: () => number = Math.random): 
 
 export abstract class HttpBatchSink implements AuditSink {
   abstract readonly name: string;
-  private queue: AuditEvent[] = [];
+  private queue: AuditRecord[] = [];
   private inFlight: Promise<boolean> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private consecutiveFailures = 0;
@@ -47,9 +47,9 @@ export abstract class HttpBatchSink implements AuditSink {
   constructor(protected readonly opts: HttpBatchOptions) {}
 
   /** The request body for one batch. */
-  protected abstract body(events: AuditEvent[]): unknown;
+  protected abstract body(events: AuditRecord[]): unknown;
 
-  write(event: AuditEvent): void {
+  write(event: AuditRecord): void {
     if (this.closed) {
       this.dropped++;
       return;
@@ -120,7 +120,7 @@ export abstract class HttpBatchSink implements AuditSink {
     return task;
   }
 
-  private async post(events: AuditEvent[]): Promise<boolean> {
+  private async post(events: AuditRecord[]): Promise<boolean> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs);
     try {

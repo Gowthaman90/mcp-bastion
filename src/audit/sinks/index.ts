@@ -50,32 +50,38 @@ function warnInsecure(sink: string, target: string, allow: boolean): void {
   }
 }
 
-/** Instantiate the configured sinks. */
+/** Instantiate the configured sinks, each carrying its own `includeArgs` override when set. */
 export function createSinks(configs: readonly SinkConfig[]): AuditSink[] {
   return configs.map((cfg) => {
-    switch (cfg.type) {
-      case "console":
-        return new ConsoleSink();
-      case "file":
-        return new FileSink(cfg.path);
-      case "webhook":
-        warnInsecure("webhook", cfg.url, cfg.allowInsecureTransport);
-        return new WebhookSink({
-          url: cfg.url,
-          headers: resolveSinkHeaders(`webhook:${cfg.url}`, cfg.headers, cfg.headersEnv),
-          batchSize: cfg.batchSize,
-          timeoutMs: cfg.timeoutMs,
-          maxQueue: cfg.maxQueue,
-        });
-      case "otlp":
-        warnInsecure("otlp", cfg.endpoint, cfg.allowInsecureTransport);
-        return new OtlpSink({
-          endpoint: cfg.endpoint,
-          headers: resolveSinkHeaders(`otlp:${cfg.endpoint}`, cfg.headers, cfg.headersEnv),
-          batchSize: cfg.batchSize,
-          timeoutMs: cfg.timeoutMs,
-          maxQueue: cfg.maxQueue,
-        });
-    }
+    const sink = createSink(cfg);
+    if (cfg.includeArgs !== undefined) sink.includeArgs = cfg.includeArgs;
+    return sink;
   });
+}
+
+function createSink(cfg: SinkConfig): AuditSink {
+  switch (cfg.type) {
+    case "console":
+      return new ConsoleSink();
+    case "file":
+      return new FileSink(cfg.path);
+    case "webhook":
+      warnInsecure("webhook", cfg.url, cfg.allowInsecureTransport);
+      return new WebhookSink({
+        url: cfg.url,
+        headers: resolveSinkHeaders(`webhook:${cfg.url}`, cfg.headers, cfg.headersEnv),
+        batchSize: cfg.batchSize,
+        timeoutMs: cfg.timeoutMs,
+        maxQueue: cfg.maxQueue,
+      });
+    case "otlp":
+      warnInsecure("otlp", cfg.endpoint, cfg.allowInsecureTransport);
+      return new OtlpSink({
+        endpoint: cfg.endpoint,
+        headers: resolveSinkHeaders(`otlp:${cfg.endpoint}`, cfg.headers, cfg.headersEnv),
+        batchSize: cfg.batchSize,
+        timeoutMs: cfg.timeoutMs,
+        maxQueue: cfg.maxQueue,
+      });
+  }
 }

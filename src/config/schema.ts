@@ -600,8 +600,16 @@ function isLoopbackUrlHost(url: string): boolean {
   );
 }
 
+/**
+ * Per-sink argument recording, overriding `audit.includeArgs` for that sink only (e.g. full arguments
+ * to a local file, none to a shared SIEM). With `tamperEvident`, differing sinks switch the chain to
+ * v2 so every sink still verifies the same chain.
+ */
+const sinkIncludeArgs = z.enum(["none", "redacted", "full"]).optional();
+
 /** Options shared by the HTTP audit sinks (webhook, OTLP). */
 const httpSinkFields = {
+  includeArgs: sinkIncludeArgs,
   /** Extra headers sent with each request, e.g. a static routing header. */
   headers: z.record(z.string(), z.string()).optional(),
   /**
@@ -641,8 +649,8 @@ function requireHttps(field: "url" | "endpoint") {
 
 /** Where audit events are delivered. */
 export const SinkConfigSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("console") }),
-  z.object({ type: z.literal("file"), path: z.string().min(1) }),
+  z.object({ type: z.literal("console"), includeArgs: sinkIncludeArgs }),
+  z.object({ type: z.literal("file"), path: z.string().min(1), includeArgs: sinkIncludeArgs }),
   z
     .object({ type: z.literal("webhook"), url: z.string().url(), ...httpSinkFields })
     .superRefine(requireHttps("url")),
@@ -686,6 +694,38 @@ export const AuditConfigSchema = z
      * sink recovers, for deployments where an unaudited call is not acceptable.
      */
     onSinkFailure: z.enum(["continue", "block"]).default("continue"),
+    /**
+     * Signed checkpoints (opt-in; requires `tamperEvident`). Each run then starts with a `run-start`
+     * record, and an Ed25519-signed checkpoint of the chain head is written every `everyEvents`
+     * events, every `everySeconds` seconds (when there is something new) and at shutdown. Send them
+     * to a `sinks` witness the log's host cannot rewrite: `mcp-bastion audit verify` then detects a
+     * log cut short or a deleted run.
+     */
+    checkpoint: z
+      .strictObject({
+        /** Ed25519 private key (PKCS#8 PEM) file. Falls back to `MCP_BASTION_CHECKPOINT_KEY` (PEM). */
+        privateKeyFile: z.string().min(1).optional(),
+        everyEvents: z.number().int().positive().default(100),
+        everySeconds: z.number().int().positive().default(60),
+        /**
+         * File keeping the last checkpoint (run, seq, hash) across restarts, so the next run's
+         * `run-start` links to it. Written `0600`.
+         */
+        stateFile: z.string().min(1).optional(),
+        /** Extra destinations that receive ONLY checkpoints (the witness). */
+        sinks: z.array(SinkConfigSchema).default([]),
+      })
+      .optional(),
+  })
+  .superRefine((cfg, ctx) => {
+    if (cfg.checkpoint && !cfg.tamperEvident) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["checkpoint"],
+        message:
+          "audit.checkpoint needs audit.tamperEvident: true (checkpoints sign the hash chain)",
+      });
+    }
   })
   .prefault({});
 export type AuditConfig = z.infer<typeof AuditConfigSchema>;

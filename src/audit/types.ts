@@ -129,11 +129,58 @@ export interface AuditEvent {
   delegation?: AuditDelegationRecord;
   /** The runtime-authorization decision, when `authorization` is enabled. */
   authorization?: AuditAuthorizationRecord;
+  /** Identifies this Bastion process run; every record of one run carries the same id. */
+  runId?: string;
+  /**
+   * `2` when sinks record arguments differently (per-sink `includeArgs`): the chain hash then covers
+   * the event WITHOUT `args`, plus `argsDigest`. Absent = v1, the hash covers `args` as recorded.
+   */
+  chainVersion?: 2;
+  /** Chain v2 with an integrity key: HMAC-SHA256 of the full arguments, so every sink verifies the same chain. */
+  argsDigest?: string;
   /** Previous event's hash (present only when tamper-evidence is enabled). */
   prevHash?: string;
   /** This event's hash over its content + `prevHash` (tamper-evidence). */
   hash?: string;
 }
+
+/**
+ * First record of a run, written when `audit.checkpoint` is configured. Chained (seq 0) like an
+ * event; `prevRunHead` links it to the last checkpoint of the previous run, so a deleted run breaks
+ * the link.
+ */
+export interface AuditRunStart {
+  recordType: "run-start";
+  schemaVersion: number;
+  seq: 0;
+  ts: string;
+  runId: string;
+  bastionVersion: string;
+  prevRunHead?: { runId: string; seq: number; hash: string };
+  prevHash?: string;
+  hash?: string;
+}
+
+/**
+ * A signed statement of the chain head: "run `runId` had `count` call events up to `seq`, ending in
+ * hash `head`". Not chained itself. Signed with Ed25519 over the canonical record without `sig`, so
+ * anyone with the public key can verify it and only the key holder can make one.
+ */
+export interface AuditCheckpoint {
+  recordType: "checkpoint";
+  runId: string;
+  seq: number;
+  head: string;
+  count: number;
+  ts: string;
+  /** First 16 hex chars of the SHA-256 of the signing public key (SPKI DER). */
+  keyId: string;
+  /** Base64url Ed25519 signature. */
+  sig: string;
+}
+
+/** Anything written to a sink. Call events carry no `recordType`. */
+export type AuditRecord = AuditEvent | AuditRunStart | AuditCheckpoint;
 
 /**
  * A destination for audit events. Implementations must make `write` non-blocking
@@ -142,14 +189,16 @@ export interface AuditEvent {
 export interface AuditSink {
   /** Human-readable sink name, for logs. */
   readonly name: string;
-  /** Record an event. MUST NOT block the caller. */
-  write(event: AuditEvent): void;
+  /** Record an event (or a run-start / checkpoint record). MUST NOT block the caller. */
+  write(event: AuditRecord): void;
   /** Flush any buffered events to their destination. */
   flush(): Promise<void>;
   /** Flush and release resources. */
   close(): Promise<void>;
   /** Delivery health, surfaced in `bastion__status` and used by `audit.onSinkFailure`. */
   health?(): SinkHealth;
+  /** Per-sink argument recording, overriding `audit.includeArgs` (set by `createSinks`). */
+  includeArgs?: "none" | "redacted" | "full";
 }
 
 /** Delivery health of one audit sink. */

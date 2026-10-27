@@ -7,21 +7,27 @@
  * @packageDocumentation
  */
 import { randomUUID } from "node:crypto";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { ToolCallOutcome } from "../security/types.js";
 
 import type { AuditConfig } from "../config/index.js";
+import { BASTION_VERSION } from "../core/constants.js";
 import { textResult } from "../internal/results.js";
 import { logger } from "../observability/index.js";
 import { findingKind, type Interceptor, type ToolCallContext } from "../security/index.js";
-import { chainHash } from "./chain.js";
+import { argsDigest, chainHash } from "./chain.js";
+import { CheckpointSigner } from "./checkpoint.js";
 import { frameworksFor, type ComplianceReport } from "./compliance.js";
-import { prepareArgs } from "./redaction.js";
+import { prepareArgs, type IncludeArgs } from "./redaction.js";
+import { createSinks } from "./sinks/index.js";
 import {
   AUDIT_SCHEMA_VERSION,
   type AuditDecision,
   type AuditEvent,
   type AuditOutcome,
+  type AuditRecord,
+  type AuditRunStart,
   type AuditSink,
   type SinkHealth,
 } from "./types.js";
@@ -42,12 +48,44 @@ export class AuditEngine {
   };
   /** HMAC key for the integrity chain (out-of-band). Unset → unkeyed SHA-256 chain. */
   private readonly integrityKey: string | undefined;
+  /** Identifies this run; carried by every record. */
+  readonly runId = randomUUID();
+  /** Chain v2: sinks record arguments differently, so the hash excludes the per-sink `args` view. */
+  private readonly chainV2: boolean;
+  private readonly signer: CheckpointSigner | undefined;
+  private readonly checkpointSinks: AuditSink[];
+  private readonly checkpointTimer: ReturnType<typeof setInterval> | undefined;
+  private callCount = 0;
+  private sinceCheckpoint = 0;
 
+  /**
+   * @throws Error if `checkpoint` is configured without a usable Ed25519 private key.
+   */
   constructor(
     private readonly config: AuditConfig,
     private readonly sinks: readonly AuditSink[],
   ) {
     this.integrityKey = config.integrityKey ?? process.env.MCP_BASTION_AUDIT_KEY;
+    const modes = new Set(sinks.map((sk) => sk.includeArgs ?? config.includeArgs));
+    this.chainV2 = config.tamperEvident && modes.size > 1;
+    if (this.chainV2 && !this.integrityKey) {
+      logger.warn(
+        "audit sinks record arguments differently and the chain has no integrityKey: arguments are not covered by the hash chain",
+      );
+    }
+
+    const cp = config.checkpoint;
+    if (cp) {
+      this.signer = new CheckpointSigner(loadCheckpointKey(cp.privateKeyFile));
+      this.checkpointSinks = createSinks(cp.sinks);
+      this.writeRunStart(cp.stateFile);
+      this.checkpointTimer = setInterval(() => {
+        if (this.sinceCheckpoint > 0) this.checkpoint();
+      }, cp.everySeconds * 1000);
+      this.checkpointTimer.unref?.();
+    } else {
+      this.checkpointSinks = [];
+    }
   }
 
   /** The interceptor to place first in the tool-call pipeline. */
@@ -103,7 +141,7 @@ export class AuditEngine {
 
   /** Delivery health of every sink that reports it (backs `bastion__status`). */
   sinkHealth(): SinkHealth[] {
-    return this.sinks.flatMap((s) => (s.health ? [s.health()] : []));
+    return [...this.sinks, ...this.checkpointSinks].flatMap((s) => (s.health ? [s.health()] : []));
   }
 
   /** True when every sink reports health and none can deliver. A sink without health counts as up. */
@@ -116,12 +154,82 @@ export class AuditEngine {
 
   /** Flush all sinks. */
   async flush(): Promise<void> {
-    await Promise.allSettled(this.sinks.map((s) => s.flush()));
+    await Promise.allSettled([...this.sinks, ...this.checkpointSinks].map((s) => s.flush()));
   }
 
-  /** Flush and close all sinks. */
+  /** Write a final checkpoint (when configured), then flush and close all sinks. */
   async close(): Promise<void> {
-    await Promise.allSettled(this.sinks.map((s) => s.close()));
+    if (this.checkpointTimer) clearInterval(this.checkpointTimer);
+    if (this.signer) this.checkpoint();
+    await Promise.allSettled([...this.sinks, ...this.checkpointSinks].map((s) => s.close()));
+  }
+
+  /** Sign the current chain head and write it to every sink and the checkpoint witnesses. */
+  checkpoint(): void {
+    if (!this.signer) return;
+    const cp = this.signer.sign({
+      runId: this.runId,
+      seq: this.seq,
+      head: this.prevHash,
+      count: this.callCount,
+    });
+    this.sinceCheckpoint = 0;
+    this.emitTo([...this.sinks, ...this.checkpointSinks], cp);
+    const stateFile = this.config.checkpoint?.stateFile;
+    if (stateFile) {
+      try {
+        writeFileSync(
+          stateFile,
+          JSON.stringify({ runId: this.runId, seq: this.seq, hash: this.prevHash }) + "\n",
+          { mode: 0o600 },
+        );
+        chmodSync(stateFile, 0o600);
+      } catch (err) {
+        logger.warn(
+          { stateFile, err: (err as Error)?.message ?? String(err) },
+          "could not write the audit checkpoint state file",
+        );
+      }
+    }
+  }
+
+  /** The chained first record of a run, linking to the previous run's last checkpoint when known. */
+  private writeRunStart(stateFile: string | undefined): void {
+    let prevRunHead: AuditRunStart["prevRunHead"];
+    if (stateFile && existsSync(stateFile)) {
+      try {
+        const st = JSON.parse(readFileSync(stateFile, "utf8")) as {
+          runId?: unknown;
+          seq?: unknown;
+          hash?: unknown;
+        };
+        if (
+          typeof st.runId === "string" &&
+          typeof st.seq === "number" &&
+          typeof st.hash === "string"
+        ) {
+          prevRunHead = { runId: st.runId, seq: st.seq, hash: st.hash };
+        }
+      } catch (err) {
+        logger.warn(
+          { stateFile, err: (err as Error)?.message ?? String(err) },
+          "unreadable audit checkpoint state file; starting an unlinked run",
+        );
+      }
+    }
+    const unhashed: Omit<AuditRunStart, "hash"> = {
+      recordType: "run-start",
+      schemaVersion: AUDIT_SCHEMA_VERSION,
+      seq: 0,
+      ts: new Date().toISOString(),
+      runId: this.runId,
+      bastionVersion: BASTION_VERSION,
+      ...(prevRunHead ? { prevRunHead } : {}),
+      prevHash: this.prevHash,
+    };
+    const hash = chainHash(this.prevHash, unhashed, this.integrityKey);
+    this.prevHash = hash;
+    this.emitTo(this.sinks, { ...unhashed, hash });
   }
 
   private record(
@@ -172,10 +280,18 @@ export class AuditEngine {
       ...(ctx.redactedSecrets ? { redactedSecrets: ctx.redactedSecrets } : {}),
       ...(ctx.wouldBlock ? { wouldBlock: ctx.wouldBlock } : {}),
       frameworks: frameworksFor(decision, ctx.findings ?? []),
-      args: prepareArgs(ctx.args, this.config.includeArgs, this.config.redactKeys),
+      // Chain v1 (and no chain): every sink records `audit.includeArgs`; per-sink views in emit().
+      ...(this.chainV2
+        ? {}
+        : { args: prepareArgs(ctx.args, this.config.includeArgs, this.config.redactKeys) }),
       ...(ctx.forwardedHeaders?.length ? { forwardedHeaders: [...ctx.forwardedHeaders] } : {}),
       ...(ctx.delegation ? { delegation: ctx.delegation } : {}),
       ...(ctx.authorization ? { authorization: ctx.authorization } : {}),
+      runId: this.runId,
+      ...(this.chainV2 ? { chainVersion: 2 as const } : {}),
+      ...(this.chainV2 && this.integrityKey
+        ? { argsDigest: argsDigest(ctx.args, this.integrityKey) }
+        : {}),
     };
 
     let event: AuditEvent = core;
@@ -195,13 +311,33 @@ export class AuditEngine {
     for (const c of core.frameworks.owaspLlm)
       this.totals.controls.owaspLlm[c] = (this.totals.controls.owaspLlm[c] ?? 0) + 1;
 
-    this.emit(event);
+    this.emitEvent(event, ctx.args);
+    this.callCount++;
+    this.sinceCheckpoint++;
+    if (this.signer && this.sinceCheckpoint >= (this.config.checkpoint?.everyEvents ?? Infinity)) {
+      this.checkpoint();
+    }
   }
 
-  private emit(event: AuditEvent): void {
+  /** Write a call event, giving each sink its own `args` view when views can differ. */
+  private emitEvent(event: AuditEvent, args: Record<string, unknown>): void {
+    const perSink = this.chainV2 || !this.config.tamperEvident;
     for (const sink of this.sinks) {
+      if (!perSink) {
+        this.emitTo([sink], event);
+        continue;
+      }
+      const mode: IncludeArgs = sink.includeArgs ?? this.config.includeArgs;
+      const view = prepareArgs(args, mode, this.config.redactKeys);
+      const { args: _shared, ...rest } = event;
+      this.emitTo([sink], view === undefined ? rest : { ...rest, args: view });
+    }
+  }
+
+  private emitTo(sinks: readonly AuditSink[], record: AuditRecord): void {
+    for (const sink of sinks) {
       try {
-        sink.write(event);
+        sink.write(record);
       } catch (err) {
         logger.warn(
           { sink: sink.name, err: (err as Error)?.message ?? String(err) },
@@ -210,4 +346,25 @@ export class AuditEngine {
       }
     }
   }
+}
+
+/** Read the checkpoint signing key from a file or `MCP_BASTION_CHECKPOINT_KEY`. */
+function loadCheckpointKey(file: string | undefined): string {
+  if (file) {
+    try {
+      return readFileSync(file, "utf8");
+    } catch (err) {
+      throw new Error(
+        `audit checkpoint key file "${file}" is unreadable: ${(err as Error).message}`,
+        { cause: err },
+      );
+    }
+  }
+  const pem = process.env.MCP_BASTION_CHECKPOINT_KEY;
+  if (!pem) {
+    throw new Error(
+      "audit.checkpoint needs an Ed25519 private key: set audit.checkpoint.privateKeyFile or MCP_BASTION_CHECKPOINT_KEY (create one with `mcp-bastion audit keygen`)",
+    );
+  }
+  return pem;
 }

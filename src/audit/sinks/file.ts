@@ -17,7 +17,7 @@
 import { closeSync, createWriteStream, openSync, type WriteStream } from "node:fs";
 
 import { logger } from "../../observability/index.js";
-import type { AuditEvent, AuditSink, SinkHealth } from "../types.js";
+import type { AuditRecord, AuditSink, SinkHealth } from "../types.js";
 
 /** Owner read/write only: audit records can carry sensitive metadata. */
 const FILE_MODE = 0o600;
@@ -66,7 +66,7 @@ export class FileSink implements AuditSink {
     return this.droppedCount;
   }
 
-  write(event: AuditEvent): void {
+  write(event: AuditRecord): void {
     if (this.failure !== undefined || this.stream.destroyed) {
       this.droppedCount++;
       return;

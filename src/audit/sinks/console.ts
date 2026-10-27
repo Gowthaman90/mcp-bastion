@@ -6,12 +6,12 @@
  *
  * @packageDocumentation
  */
-import type { AuditEvent, AuditSink } from "../types.js";
+import type { AuditRecord, AuditSink } from "../types.js";
 
 export class ConsoleSink implements AuditSink {
   readonly name = "console";
 
-  write(event: AuditEvent): void {
+  write(event: AuditRecord): void {
     process.stderr.write(`${JSON.stringify(event)}\n`);
   }
 

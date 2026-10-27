@@ -7,7 +7,7 @@
  *
  * @packageDocumentation
  */
-import type { AuditEvent } from "../types.js";
+import type { AuditRecord } from "../types.js";
 import { HttpBatchSink } from "./http-batch.js";
 
 export interface WebhookSinkOptions {
@@ -28,7 +28,7 @@ export class WebhookSink extends HttpBatchSink {
     this.name = `webhook:${opts.url}`;
   }
 
-  protected body(events: AuditEvent[]): unknown {
+  protected body(events: AuditRecord[]): unknown {
     return { events };
   }
 }
