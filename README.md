@@ -42,6 +42,7 @@ your servers run unchanged, and removing Bastion is a one-line config revert.
 
 - [Why](#why)
 - [How it works](#how-it-works)
+- [Security model](#security-model)
 - [Features](#features)
 - [Quick start](#quick-start)
 - [Demo](#demo)
@@ -50,6 +51,7 @@ your servers run unchanged, and removing Bastion is a one-line config revert.
 - [Transports](#transports)
 - [Per-user identity (gateway mode)](#per-user-identity-gateway-mode)
 - [Delegation checks](#delegation-checks)
+- [Runtime authorization](#runtime-authorization)
 - [Runtime security](#runtime-security)
 - [Audit & compliance](#audit--compliance)
 - [Client setup](#client-setup)
@@ -92,6 +94,43 @@ Bastion is a standard MCP **server** to your client and a standard MCP **client*
 Because it speaks the protocol faithfully, it works with every compliant client automatically — the
 only per-client difference is where you put a few lines of config.
 
+## Security model
+
+Bastion's security rests on **three independent mechanisms**. Heuristics feed all three and replace
+none of them: a heuristic finding is a risk signal, never a proof that a tool is safe.
+
+| Mechanism                      | What it gives you                                                                                             | Checks                                                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Definition integrity**       | The tool, server and configuration you approved are the ones being called                                     | tool pinning (rug pull), server identity, config drift, argument schema                                                                 |
+| **Runtime authorization**      | Each caller reaches only the tools and argument values its policy grants, decided before any upstream contact | [`authorization`](#runtime-authorization) rules, [delegation checks](#delegation-checks) (who acts for whom), MRTR continuation custody |
+| **Trustworthy audit evidence** | Every decision is recorded without leaking secrets, and a changed or shortened log can be detected            | [audit events](#audit--compliance), hash chain, signed checkpoints, sink health, redaction                                              |
+
+Every finding carries a `kind`: **deterministic** (an exact comparison against a pin, a schema, a policy
+or a token's claims) or **heuristic** (pattern matching that can misfire on benign text and can be
+evaded by a novel payload). What each enforcement profile does with them:
+
+| Check                                                                                 | Kind          | `observe` | `balanced` (default) | `strict` |
+| ------------------------------------------------------------------------------------- | ------------- | --------- | -------------------- | -------- |
+| Tool pinning (rug pull), server identity                                              | deterministic | warn      | block                | block    |
+| Runtime authorization                                                                 | deterministic | warn      | block                | block    |
+| Delegation token checks                                                               | deterministic | warn      | block                | block    |
+| Delegation chain depth / cycles                                                       | deterministic | warn      | warn                 | block    |
+| Cross-server data flow                                                                | deterministic | warn      | block                | block    |
+| Argument inspection: schema, plus command-injection and injected-instruction patterns | mixed         | warn      | block                | block    |
+| MRTR (`input_required`) gate                                                          | mixed         | warn      | block                | block    |
+| Description poisoning                                                                 | heuristic     | warn      | warn                 | block    |
+| Response heuristics (injection, steering)                                             | heuristic     | warn      | warn                 | block    |
+
+Argument inspection blocks under `balanced` even though part of it is heuristic: a false positive costs
+the agent a retry, while a miss can run a command. Inline secret redaction in results
+(`redactResponseSecrets`) is on in every profile. Under `observe` nothing is blocked and each audit event
+records `wouldBlock`: what `balanced` would have done.
+
+**Known limits.** Poisoning and response heuristics can be evaded by payloads they have not seen.
+Redaction covers known secret shapes, not every secret. Bastion does not sandbox the upstream server
+itself. Authorization trusts the identities it is given: bearer clients it authenticates itself, and
+delegation claims it verifies only in signature mode (see `trustStructuralClaims`).
+
 ## Features
 
 - 🔌 **Client-agnostic** — one binary, config-only integration; no per-client plugins.
@@ -104,9 +143,14 @@ only per-client difference is where you put a few lines of config.
 - 🛡️ **Runtime security** _(new in v0.2)_ — pins each tool's definition and blocks "rug pulls" (a
   server changing a tool after approval); heuristically inspects descriptions for poisoning; detects
   cross-server shadowing. See [Runtime security](#runtime-security).
-- 📝 **Audit & compliance** _(new in v0.3, opt-in)_ — structured, integrity-hash-chained audit events to
-  pluggable sinks (console / file / webhook), mapped to NIST AI RMF & OWASP LLM Top 10. See
-  [Audit & compliance](#audit--compliance).
+- 🔐 **Runtime authorization** _(new in v1.4, opt-in)_ — per-caller, per-tool policy decided before any
+  upstream contact: which client, user and agent may call which tool with which argument values,
+  deny-overrides, default-deny, and an observe mode to preview a policy. See
+  [Runtime authorization](#runtime-authorization).
+- 📝 **Audit & compliance** _(opt-in)_ — structured, hash-chained audit events to pluggable sinks
+  (console / file / webhook / OTLP), mapped to NIST AI RMF & OWASP LLM Top 10; since v1.4 with HTTPS-only
+  remote sinks, retrying delivery, per-sink redaction and Ed25519-signed checkpoints that make a shortened
+  log detectable. See [Audit & compliance](#audit--compliance).
 - 🪶 **Non-invasive & reversible** — your servers run unchanged; uninstall is a config revert.
 - 🧱 **Enterprise-grade codebase** — strict TypeScript, layered architecture, ESLint + Prettier, and
   unit + end-to-end tests.
@@ -188,55 +232,71 @@ only standard MCP calls:
 
 ## Configuration
 
-| Key                                       | Type                           | Default              | Description                                                                                                                  |
-| ----------------------------------------- | ------------------------------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `servers`                                 | map                            | —                    | Upstream servers to proxy (required, at least one).                                                                          |
-| `servers.<name>.command`                  | string                         | —                    | Executable to launch (e.g. `npx`, `node`).                                                                                   |
-| `servers.<name>.args`                     | string[]                       | `[]`                 | Arguments to `command`.                                                                                                      |
-| `servers.<name>.env`                      | map                            | —                    | Env overrides merged over the process env.                                                                                   |
-| `servers.<name>.cwd`                      | string                         | —                    | Working directory for the spawned process.                                                                                   |
-| `reconnect.auto`                          | boolean                        | `true`               | Auto-reconnect after an unexpected disconnect.                                                                               |
-| `reconnect.maxRetries`                    | number                         | `10`                 | Max attempts before giving up (`-1` = unlimited).                                                                            |
-| `reconnect.initialBackoffMs`              | number                         | `500`                | Initial backoff, doubled each attempt.                                                                                       |
-| `reconnect.maxBackoffMs`                  | number                         | `30000`              | Backoff ceiling.                                                                                                             |
-| `healthCheck.enabled`                     | boolean                        | `true`               | Enable periodic liveness probing.                                                                                            |
-| `healthCheck.intervalMs`                  | number                         | `30000`              | Interval between probes.                                                                                                     |
-| `healthCheck.timeoutMs`                   | number                         | `5000`               | Per-probe timeout.                                                                                                           |
-| `namespace.strategy`                      | `prefix` \| `passthrough`      | `prefix`             | How upstream tool names are exposed.                                                                                         |
-| `namespace.separator`                     | string                         | `__`                 | Separator used by the `prefix` strategy.                                                                                     |
-| `security.pinTools`                       | boolean                        | `true`               | Pin tool definitions and detect later changes.                                                                               |
-| `security.onRugPull`                      | `block` \| `warn`              | `block`              | Action when a pinned tool's definition changed.                                                                              |
-| `security.inspectDescriptions`            | boolean                        | `true`               | Run poisoning heuristics on tool descriptions.                                                                               |
-| `security.onPoisoning`                    | `block` \| `warn`              | `warn`               | Action on a high-severity poisoning finding.                                                                                 |
-| `audit.enabled`                           | boolean                        | `false`              | Record an audit event for every tool call.                                                                                   |
-| `audit.includeArgs`                       | `none`\|`redacted`\|`full`     | `none`               | How tool arguments are recorded.                                                                                             |
-| `audit.tamperEvident`                     | boolean                        | `false`              | Hash-chain events so tampering is detectable.                                                                                |
-| `audit.sinks`                             | array                          | console              | Destinations: `console`, `file`, `webhook`, `otlp`.                                                                          |
-| `servers.<name>.transport`                | `stdio` \| `http`              | `stdio`              | Local subprocess or remote endpoint.                                                                                         |
-| `servers.<name>.url`                      | string                         | —                    | Remote MCP URL (required for `http`).                                                                                        |
-| `servers.<name>.headers`                  | map                            | —                    | Headers for `http` upstreams (e.g. `Authorization`).                                                                         |
-| `servers.<name>.forwardHeaders`           | map                            | —                    | `http` only. Upstream header ← incoming header, copied per request (gateway mode). Needs `listen.mode: "http"`.              |
-| `servers.<name>.onMissingForwardedHeader` | `error` \| `omit`              | `error`              | When a request lacks a forwarded header: answer a tool error without calling the upstream, or call it without.               |
-| `servers.<name>.connect`                  | `startup` \| `onDemand`        | `startup`            | `onDemand`: connect on the first request that needs this upstream, with that request's forwarded headers.                    |
-| `servers.<name>.authHeaders`              | string[]                       | —                    | Extra header names that count as authentication in `bastion__status` (`forwardHeaders` keys always count).                   |
-| `servers.<name>.delegation`               | object                         | —                    | `http` only, needs `forwardHeaders`. Keyless checks on the delegate JWT in a forwarded header ([below](#delegation-checks)). |
-| `servers.<name>.delegation.verify`        | `structural` \| `signature`    | `structural`         | `signature` also verifies the JWT against public keys (`jwksUrl` or `jwks`), with `issuer` and an `algorithms` allow-list.   |
-| `delegation.gatewayAudiences`             | string[]                       | `[]`                 | Audiences that identify Bastion itself; a token for one of them (or with no `aud`) is passthrough.                           |
-| `delegation.oneUserPerRequest`            | boolean                        | `true`               | All delegate tokens in one request must name the same user (`iss` + `sub`).                                                  |
-| `delegation.recordSubject`                | `hash` \| `plain`              | `hash`               | Audit subject: HMAC pseudonym of `iss\|sub`, or `sub` as is.                                                                 |
-| `delegation.subjectKey`                   | string (≥16)                   | see below            | Pseudonym key; or `MCP_BASTION_SUBJECT_KEY`, then the audit integrity key, then random per process.                          |
-| `security.onDelegation`                   | `block` \| `warn`              | `block`              | Action on a delegation finding other than the chain rules.                                                                   |
-| `security.onDelegationChain`              | `block` \| `warn`              | `warn`               | Action on `delegation-chain-depth` / `-chain-cycle` (`block` under `strict`).                                                |
-| `listen.mode`                             | `stdio` \| `http`              | `stdio`              | Serve Bastion over stdio or Streamable HTTP.                                                                                 |
-| `listen.host` / `listen.port`             | string / number                | `127.0.0.1` / `3000` | Bind address for `http` mode.                                                                                                |
-| `listen.validateRoutingHeaders`           | boolean                        | `true`               | Reject `Mcp-*` routing headers that disagree with the body (`-32020`, MCP 2026-07-28).                                       |
-| `security.maxCacheTtlMs`                  | number (ms)                    | `3600000`            | Ceiling on upstream `ttlMs` cache hints forwarded downstream (MCP 2026-07-28).                                               |
-| `servers.<name>.protocol`                 | `auto`\|`legacy`\|`2026-07-28` | `auto`               | Era negotiation per upstream (probe 2026-07-28, fall back; or pin).                                                          |
-| `listen.legacy`                           | `stateless` \| `reject`        | `stateless`          | Serve pre-2026-07-28 clients statelessly, or refuse them (`-32022`).                                                         |
-| `security.inspectInputRequests`           | boolean                        | `true`               | Gate `input_required` rounds (credential phishing, model steering).                                                          |
-| `security.onInputRequired`                | `block` \| `warn`              | `block`              | Action on a high-severity MRTR finding (`warn` strips the request).                                                          |
-| `security.requestStateKey`                | string (≥16)                   | random per process   | HMAC key sealing `requestState` envelopes; or `MCP_BASTION_REQUEST_STATE_KEY`.                                               |
-| `security.requestStateTtlSeconds`         | number                         | `300`                | Lifetime of a sealed `requestState` envelope.                                                                                |
+| Key                                       | Type                                | Default              | Description                                                                                                                  |
+| ----------------------------------------- | ----------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `servers`                                 | map                                 | —                    | Upstream servers to proxy (required, at least one).                                                                          |
+| `servers.<name>.command`                  | string                              | —                    | Executable to launch (e.g. `npx`, `node`).                                                                                   |
+| `servers.<name>.args`                     | string[]                            | `[]`                 | Arguments to `command`.                                                                                                      |
+| `servers.<name>.env`                      | map                                 | —                    | Env overrides merged over the process env.                                                                                   |
+| `servers.<name>.cwd`                      | string                              | —                    | Working directory for the spawned process.                                                                                   |
+| `reconnect.auto`                          | boolean                             | `true`               | Auto-reconnect after an unexpected disconnect.                                                                               |
+| `reconnect.maxRetries`                    | number                              | `10`                 | Max attempts before giving up (`-1` = unlimited).                                                                            |
+| `reconnect.initialBackoffMs`              | number                              | `500`                | Initial backoff, doubled each attempt.                                                                                       |
+| `reconnect.maxBackoffMs`                  | number                              | `30000`              | Backoff ceiling.                                                                                                             |
+| `healthCheck.enabled`                     | boolean                             | `true`               | Enable periodic liveness probing.                                                                                            |
+| `healthCheck.intervalMs`                  | number                              | `30000`              | Interval between probes.                                                                                                     |
+| `healthCheck.timeoutMs`                   | number                              | `5000`               | Per-probe timeout.                                                                                                           |
+| `namespace.strategy`                      | `prefix` \| `passthrough`           | `prefix`             | How upstream tool names are exposed.                                                                                         |
+| `namespace.separator`                     | string                              | `__`                 | Separator used by the `prefix` strategy.                                                                                     |
+| `security.pinTools`                       | boolean                             | `true`               | Pin tool definitions and detect later changes.                                                                               |
+| `security.onRugPull`                      | `block` \| `warn`                   | `block`              | Action when a pinned tool's definition changed.                                                                              |
+| `security.inspectDescriptions`            | boolean                             | `true`               | Run poisoning heuristics on tool descriptions.                                                                               |
+| `security.onPoisoning`                    | `block` \| `warn`                   | `warn`               | Action on a high-severity poisoning finding.                                                                                 |
+| `audit.enabled`                           | boolean                             | `false`              | Record an audit event for every tool call.                                                                                   |
+| `audit.includeArgs`                       | `none`\|`redacted`\|`full`          | `none`               | How tool arguments are recorded.                                                                                             |
+| `audit.tamperEvident`                     | boolean                             | `false`              | Hash-chain events so tampering is detectable.                                                                                |
+| `audit.sinks`                             | array                               | console              | Destinations: `console`, `file`, `webhook`, `otlp`.                                                                          |
+| `servers.<name>.transport`                | `stdio` \| `http`                   | `stdio`              | Local subprocess or remote endpoint.                                                                                         |
+| `servers.<name>.url`                      | string                              | —                    | Remote MCP URL (required for `http`).                                                                                        |
+| `servers.<name>.headers`                  | map                                 | —                    | Headers for `http` upstreams (e.g. `Authorization`).                                                                         |
+| `servers.<name>.forwardHeaders`           | map                                 | —                    | `http` only. Upstream header ← incoming header, copied per request (gateway mode). Needs `listen.mode: "http"`.              |
+| `servers.<name>.onMissingForwardedHeader` | `error` \| `omit`                   | `error`              | When a request lacks a forwarded header: answer a tool error without calling the upstream, or call it without.               |
+| `servers.<name>.connect`                  | `startup` \| `onDemand`             | `startup`            | `onDemand`: connect on the first request that needs this upstream, with that request's forwarded headers.                    |
+| `servers.<name>.authHeaders`              | string[]                            | —                    | Extra header names that count as authentication in `bastion__status` (`forwardHeaders` keys always count).                   |
+| `servers.<name>.delegation`               | object                              | —                    | `http` only, needs `forwardHeaders`. Keyless checks on the delegate JWT in a forwarded header ([below](#delegation-checks)). |
+| `servers.<name>.delegation.verify`        | `structural` \| `signature`         | `structural`         | `signature` also verifies the JWT against public keys (`jwksUrl` or `jwks`), with `issuer` and an `algorithms` allow-list.   |
+| `delegation.gatewayAudiences`             | string[]                            | `[]`                 | Audiences that identify Bastion itself; a token for one of them (or with no `aud`) is passthrough.                           |
+| `delegation.oneUserPerRequest`            | boolean                             | `true`               | All delegate tokens in one request must name the same user (`iss` + `sub`).                                                  |
+| `delegation.recordSubject`                | `hash` \| `plain`                   | `hash`               | Audit subject: HMAC pseudonym of `iss\|sub`, or `sub` as is.                                                                 |
+| `delegation.subjectKey`                   | string (≥16)                        | see below            | Pseudonym key; or `MCP_BASTION_SUBJECT_KEY`, then the audit integrity key, then random per process.                          |
+| `security.onDelegation`                   | `block` \| `warn`                   | `block`              | Action on a delegation finding other than the chain rules.                                                                   |
+| `security.onDelegationChain`              | `block` \| `warn`                   | `warn`               | Action on `delegation-chain-depth` / `-chain-cycle` (`block` under `strict`).                                                |
+| `listen.mode`                             | `stdio` \| `http`                   | `stdio`              | Serve Bastion over stdio or Streamable HTTP.                                                                                 |
+| `listen.host` / `listen.port`             | string / number                     | `127.0.0.1` / `3000` | Bind address for `http` mode.                                                                                                |
+| `listen.validateRoutingHeaders`           | boolean                             | `true`               | Reject `Mcp-*` routing headers that disagree with the body (`-32020`, MCP 2026-07-28).                                       |
+| `security.maxCacheTtlMs`                  | number (ms)                         | `3600000`            | Ceiling on upstream `ttlMs` cache hints forwarded downstream (MCP 2026-07-28).                                               |
+| `servers.<name>.protocol`                 | `auto`\|`legacy`\|`2026-07-28`      | `auto`               | Era negotiation per upstream (probe 2026-07-28, fall back; or pin).                                                          |
+| `listen.legacy`                           | `stateless` \| `reject`             | `stateless`          | Serve pre-2026-07-28 clients statelessly, or refuse them (`-32022`).                                                         |
+| `security.inspectInputRequests`           | boolean                             | `true`               | Gate `input_required` rounds (credential phishing, model steering).                                                          |
+| `security.onInputRequired`                | `block` \| `warn`                   | `block`              | Action on a high-severity MRTR finding (`warn` strips the request).                                                          |
+| `security.requestStateKey`                | string (≥16)                        | random per process   | HMAC key sealing `requestState` envelopes; or `MCP_BASTION_REQUEST_STATE_KEY`.                                               |
+| `security.requestStateTtlSeconds`         | number                              | `300`                | Lifetime of a sealed `requestState` envelope.                                                                                |
+| `security.enforcementProfile`             | `observe` \| `balanced` \| `strict` | `balanced`           | Sets every `on*` action as a group; see [Security model](#security-model). An explicit `on*` overrides it.                   |
+| `security.onAuthorization`                | `block` \| `warn`                   | `block`              | Action when `authorization` refuses a call (`warn` under `observe`).                                                         |
+| `security.redactResponseSecrets`          | boolean                             | `true`               | Redact secret values from tool results before the agent sees them.                                                           |
+| `authorization.enabled`                   | boolean                             | `false`              | Turn on runtime authorization; see [Runtime authorization](#runtime-authorization).                                          |
+| `authorization.default`                   | `deny` \| `allow`                   | `deny`               | Decision for an identity no rule allows.                                                                                     |
+| `authorization.rules`                     | array                               | `[]`                 | `{ id, effect, principal, tools, args? }` rules; deny overrides allow.                                                       |
+| `authorization.trustStructuralClaims`     | boolean                             | `false`              | Accept `user`/`agent` from structural-mode delegate tokens.                                                                  |
+| `listen.authToken`                        | string                              | —                    | Bearer token for the client `default`. Required for a non-loopback bind unless `listen.clients` is set.                      |
+| `listen.clients`                          | map                                 | —                    | Named clients: `{ "<name>": { "tokenEnv": "VAR" } }`, one bearer token each.                                                 |
+| `audit.integrityKey`                      | string                              | —                    | HMAC key for the chain; or `MCP_BASTION_AUDIT_KEY`.                                                                          |
+| `audit.onSinkFailure`                     | `continue` \| `block`               | `continue`           | `block` refuses calls while no sink can deliver.                                                                             |
+| `audit.sinks[].includeArgs`               | `none`\|`redacted`\|`full`          | `audit.includeArgs`  | Per-sink argument recording.                                                                                                 |
+| `audit.sinks[].headersEnv`                | map                                 | —                    | `webhook`/`otlp`: header name → environment variable.                                                                        |
+| `audit.sinks[].allowInsecureTransport`    | boolean                             | `false`              | `webhook`/`otlp`: allow plain HTTP to a non-loopback host.                                                                   |
+| `audit.sinks[].maxQueue`                  | number                              | `10000`              | `webhook`/`otlp`: events held while the receiver is down.                                                                    |
+| `audit.checkpoint`                        | object                              | —                    | Signed checkpoints: `privateKeyFile`, `everyEvents` (100), `everySeconds` (60), `stateFile`, `sinks`.                        |
 
 ## Transports
 
@@ -430,6 +490,86 @@ can verify them against the issuer's **public** keys:
 
 See [`examples/delegation.config.json`](examples/delegation.config.json) for three sub-agents.
 
+## Runtime authorization
+
+_New in v1.4, opt-in._ Decide **who may call which tool, with which arguments**, on every call and
+before any upstream server is contacted. Inactive unless `authorization.enabled`.
+
+```jsonc
+"listen": {
+  "mode": "http",
+  "clients": {                                   // one bearer token per client, read from the environment
+    "docs-assistant":   { "tokenEnv": "BASTION_TOKEN_DOCS" },
+    "release-pipeline": { "tokenEnv": "BASTION_TOKEN_RELEASE" },
+    "ops-console":      { "tokenEnv": "BASTION_TOKEN_OPS" }
+  }
+},
+"security": { "enforcementProfile": "observe" },   // preview first: log, never block
+"authorization": {
+  "enabled": true,
+  "default": "deny",
+  "rules": [
+    { "id": "docs-read", "effect": "allow", "principal": { "client": "docs-assistant" },
+      "tools": ["files__read_file", "files__list_dir"],
+      "args": { "path": { "pathWithin": "/srv/docs" } } },
+    { "id": "release-staging", "effect": "allow", "principal": { "client": "release-pipeline" },
+      "tools": ["deploy__*"], "args": { "env": { "in": ["staging"] } } },
+    { "id": "no-prod-rollback", "effect": "deny", "principal": "*",
+      "tools": ["deploy__rollback"], "args": { "env": { "equals": "prod" } } },
+    { "id": "ops-control", "effect": "allow", "principal": { "client": "ops-console" },
+      "tools": ["bastion__*"] }
+  ]
+}
+```
+
+**Who is calling.** A call carries every identity Bastion has authenticated: the **client** (a named
+`listen.clients` bearer token, `default` for `listen.authToken`, or `stdio`), plus the **user** and the
+acting **agent** from the call's [delegate token](#delegation-checks) when there is one. Identities named
+in arguments, headers, `_meta` or input responses are ignored: a request cannot promote itself by
+claiming to be someone else.
+
+**How a call is decided.**
+
+- **Every identity must be permitted.** An agent acting for a user needs the user's grant _and_ its own,
+  so an agent's broad service grant is never used for a user who lacks the right (the confused deputy),
+  and a user's right is never used by an agent that was not granted it. Earlier agents in a delegation
+  chain grant nothing; only the current one counts.
+- **Deny overrides allow.** Per identity, any matching `deny` refuses; otherwise an `allow` whose
+  argument constraints all hold is needed. With `default: "deny"`, no matching allow means no access.
+- **Rules.** `principal` is `"*"` or one of `client`, `user`, `agent` (a name or a list). `tools` are
+  namespaced names, exact or ending in one `*`. `args` constrain top-level arguments with `equals`, `in`,
+  `max`, `min` and `pathWithin`. Matching is exact: no case folding, Unicode normalisation or type
+  coercion; `max`/`min` accept JSON numbers only; `pathWithin` resolves `.` and `..` and checks the
+  boundary at a `/` (so `/srv/docs-archive` is not inside `/srv/docs`).
+- **Fail closed.** A missing constrained argument fails an `allow`. A `deny` with `args` applies unless
+  its constraints can be evaluated and do not hold, so a missing or wrongly typed argument cannot slip
+  past a deny.
+- **Control tools** (`bastion__*`) are authorized like any tool, under server name `bastion`. With
+  `default: "deny"`, grant them to an operator client, as `ops-console` above.
+
+**Where it runs.** In `tools/call`, after the delegation checks and before any upstream contact, so a
+refused call never opens a connection carrying the caller's forwarded headers. Continuations
+(`input_required` retries) are re-authorized. `tools/list` hides tools a caller could never be allowed.
+
+**Rolling it out.** Start under `enforcementProfile: "observe"`: nothing is refused, and each audit
+event carries an `authorization` record (`effect`, deciding `rule`, `violations` such as
+`agent:argument`) plus `wouldBlock: "blocked_authorization"` where enforcement would have refused. When
+the log shows only refusals you intend, switch to `balanced`. Under `balanced` a refused call is answered
+`Blocked by mcp-bastion: this caller is not authorized to call "<tool>" (rule <id>).`; no other policy
+content is revealed.
+
+**Trust in user and agent identities.** They come only from a trusted delegate token: one verified in
+[signature mode](#signature-mode), or, in structural mode, only with `trustStructuralClaims: true`. Set
+that only when the upstream verifies the same token itself, so a forged claim that passes Bastion is still
+rejected upstream. A rule naming a `user` or `agent` for a structural-mode upstream is a config error
+otherwise, and a token that is present but untrusted refuses the call (`delegation:unverified`).
+
+**Measured.** This family of checks was pre-registered as test cases in
+[mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench) (tag
+`authorization-prereg-2026-10-26`) before this code was written. Per-caller MCP authorization also exists
+in other gateways (for example agentgateway's CEL rules and ToolHive's Cedar policies), and the
+benchmark's pre-registration commits to scoring them side by side.
+
 ## Runtime security
 
 _New in v0.2._ Bastion adds a security layer in the tool-call path (an interceptor pipeline), enabled
@@ -445,45 +585,92 @@ by default:
   and reported, not blocked); set `onPoisoning: "block"` to enforce.
 - **Shadowing.** When two servers expose a tool with the same name, it's surfaced in the report.
 
-Review everything with the `bastion__security` tool. These checks apply to local stdio servers today;
-authentication checks for remote servers arrive with HTTP transport support.
+Review everything with the `bastion__security` tool. Each finding says whether it is `heuristic` or
+`deterministic`; see [Security model](#security-model).
 
 ## Audit & compliance
 
-_New in v0.3, opt-in._ Enable `audit` to record a structured, versioned event for every tool call —
-including calls blocked by the security layer:
+_Opt-in._ Enable `audit` to record a structured, versioned event for every tool call, including calls
+refused by the security layer or by [authorization](#runtime-authorization):
 
 ```jsonc
 "audit": {
   "enabled": true,
-  "includeArgs": "redacted",     // none | redacted | full
-  "tamperEvident": true,          // integrity hash-chain (detects naive edits; unkeyed, not signed)
+  "includeArgs": "redacted",            // none | redacted | full (default for every sink)
+  "tamperEvident": true,                // hash chain; keyed with integrityKey / MCP_BASTION_AUDIT_KEY
+  "onSinkFailure": "continue",          // or "block": refuse calls while no sink can deliver
   "sinks": [
-    { "type": "file", "path": "./bastion-audit.jsonl" },
-    { "type": "webhook", "url": "https://collector.example/v1/audit" }
-  ]
+    { "type": "file", "path": "./bastion-audit.jsonl", "includeArgs": "full" },
+    { "type": "otlp", "endpoint": "https://collector.example:4318",
+      "headersEnv": { "authorization": "OTEL_AUTH_HEADER" }, "includeArgs": "none" }
+  ],
+  "checkpoint": {                       // signed checkpoints (needs tamperEvident)
+    "privateKeyFile": "/etc/bastion/checkpoint-private.pem",
+    "stateFile": "/var/lib/bastion/audit-state.json",
+    "sinks": [{ "type": "webhook", "url": "https://witness.example/checkpoints" }]
+  }
 }
 ```
 
-- **Pluggable sinks.** `console` (stderr JSONL), `file` (JSONL append), `webhook` (batched POST), and
-  `otlp` (native OpenTelemetry logs export — point it at an OTel Collector to fan out to any SIEM/cloud
-  backend). The sink interface makes new destinations additive.
-- **Compliance mapping.** Each event is mapped to **NIST AI RMF** functions and **OWASP LLM Top 10**
-  categories; `bastion__compliance` returns an aggregate report of recent activity.
-- **Integrity hash chain.** With `tamperEvident`, events are linked by a SHA-256 hash chain, and the
-  exported `verifyChain` helper detects naive or partial edits within an intact log. The chain is
-  **unkeyed**: a party who can rewrite the log file can recompute a consistent chain, and truncating the
-  most-recent events links cleanly — so treat this as corruption-detection, **not** cryptographic
-  tamper-proofing. For stronger guarantees, ship events to an append-only external sink (webhook / OTLP →
-  a WORM store or SIEM). Keyed/signed attestation is on the roadmap.
-- **Shadow mode.** Under `security.enforcementProfile: "observe"` nothing is blocked, and each event
-  says what enforcement would have done: `wouldBlock` holds the decision the `balanced` profile would have
-  recorded (e.g. `blocked_rug_pull`), a rug pull appears in `findings` as `tool-definition-changed`, and
-  `responseFindings` / `redactedSecrets` record what the result scan and inline DLP found.
-- **Redaction (best-effort).** Arguments are omitted by default; `includeArgs: "redacted"` keeps structure
-  while masking values under known credential key-names and common secret patterns. It is a heuristic, not
-  a guarantee — a secret under an unrecognized key can still be recorded, so prefer `none` for
-  high-sensitivity deployments.
+**Events.** Each event names the server, tool, decision (`allowed`, `blocked_rug_pull`,
+`blocked_authorization`, …), outcome, findings with their `kind`, the `authorization` and delegation
+records when present, a `runId`, and a mapping to **NIST AI RMF** functions and **OWASP LLM Top 10**
+categories. `bastion__compliance` returns aggregate totals.
+
+**Each sink is its own security boundary.**
+
+- `console` (stderr), `file` (JSON lines, created `0600`), `webhook` and `otlp` (OpenTelemetry logs).
+- Remote sinks must use **HTTPS** unless the host is loopback. Plain HTTP to a remote host is a config
+  error unless the sink sets `allowInsecureTransport: true`, which logs a warning.
+- Credentials come from the environment (`headersEnv`), not the config file; a missing variable stops
+  startup.
+- A failed delivery is retried with exponential backoff instead of being dropped. Events wait in a
+  bounded queue (`maxQueue`, default 10 000); beyond it the oldest are dropped and counted. Receivers can
+  also spot gaps from each event's `seq`.
+- `bastion__status` shows each sink's health: `healthy`, `delivered`, `dropped`, `queued`, `lastError`.
+- With `onSinkFailure: "block"`, calls are refused (`blocked_audit_unavailable`) while no sink can
+  deliver, for deployments where an unaudited call is not acceptable. Bastion's own control tools stay
+  usable so the sinks can be inspected and recovered.
+
+**Redaction is first-class.**
+
+- Arguments are not recorded by default. Each sink can record its own level (`includeArgs` per sink):
+  for example full arguments to a local file and none to a shared SIEM.
+- `redacted` keeps structure and masks values under credential key names and values that look like
+  secrets: cloud and provider keys, GitHub, Slack, Stripe, Google and npm tokens, JWTs, `Bearer`
+  credentials, passwords in URLs, private-key blocks and `NAME=secret` assignments. The same patterns
+  redact secrets from tool **results** before the agent sees them (`redactResponseSecrets`, on by
+  default). Measured on a 39-case corpus (`test/redaction-corpus.test.ts`): 27/27 secrets caught, 0/12
+  benign look-alikes changed.
+- Never written to any sink: tool results, delegate-token values, forwarded header values (names only),
+  and the raw user `sub` when `delegation.recordSubject` is `hash`. Arguments are recorded only as
+  `includeArgs` allows, so a secret passed as an argument is kept under `full`.
+- Redaction is pattern-based. A secret in an unrecognised shape under an unrecognised key can still be
+  recorded, so prefer `none` for high-sensitivity sinks.
+
+**Tamper evidence, and its limits.**
+
+- With `tamperEvident`, events form a hash chain. With an `integrityKey` the chain is HMAC-SHA256:
+  without the key, a party who rewrites the log cannot recompute it. Unkeyed, it only detects naive
+  edits.
+- When sinks record arguments differently, the chain (v2) covers each event without its `args` view
+  plus an `argsDigest` (HMAC of the full arguments), so every sink verifies the same chain.
+- A hash chain cannot show that the newest records were cut off. **Signed checkpoints** can:
+  `audit.checkpoint` writes an Ed25519-signed statement of the chain head every `everyEvents` (100)
+  events, every `everySeconds` (60) seconds and at shutdown, and each run starts with a `run-start`
+  record linked to the previous run through `stateFile`. Send checkpoints to a witness sink the log's
+  host cannot rewrite.
+- `mcp-bastion audit verify <log> --checkpoints <witness.jsonl> --public-key <pem>` checks the chain,
+  `seq` continuity, checkpoint signatures, run links, a log cut short and a deleted run. Exit `0` intact,
+  `1` tampered, `2` cannot verify. `mcp-bastion audit keygen --out <dir>` creates the key pair.
+- **Limit:** a cut is detected only back to the last checkpoint that reached a witness the attacker
+  cannot rewrite; without a witness, cutting a log together with its checkpoints is not detectable. An
+  attacker holding the private key can forge checkpoints, so keep it off the log's host.
+
+**Shadow mode.** Under `security.enforcementProfile: "observe"` nothing is blocked, and each event says
+what enforcement would have done: `wouldBlock` holds the decision `balanced` would have recorded, a rug
+pull appears in `findings` as `tool-definition-changed`, and `responseFindings` / `redactedSecrets`
+record what the result scan and inline DLP found (or `secret-in-result` when redaction is off).
 
 ## Standards alignment
 
@@ -553,11 +740,13 @@ npm run dev -- --config bastion.config.json
 
 ## Roadmap
 
-| Version     | Theme                  | Highlights                                                                                |
-| ----------- | ---------------------- | ----------------------------------------------------------------------------------------- |
-| **v0.1** ✅ | **Reliability**        | Aggregating proxy, auto-reconnect, `bastion__status` / `__reconnect`.                     |
-| **v0.2** ✅ | **Runtime security**   | Tool-definition pinning (rug-pull detection), poisoning inspection, shadowing detection.  |
-| **v0.3** ✅ | **Audit & compliance** | Pluggable audit sinks (console / file / webhook), NIST AI RMF / OWASP LLM Top 10 mapping. |
+| Version     | Theme                        | Highlights                                                                                                                    |
+| ----------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **v0.1** ✅ | **Reliability**              | Aggregating proxy, auto-reconnect, `bastion__status` / `__reconnect`.                                                         |
+| **v0.2** ✅ | **Runtime security**         | Tool-definition pinning (rug-pull detection), poisoning inspection, shadowing detection.                                      |
+| **v0.3** ✅ | **Audit & compliance**       | Pluggable audit sinks (console / file / webhook), NIST AI RMF / OWASP LLM Top 10 mapping.                                     |
+| **v1.2** ✅ | **Delegation**               | Keyless checks on delegate tokens: audience, subject mixing, expiry, actor chains, signatures.                                |
+| **v1.4**    | **Authorization & evidence** | Per-caller runtime authorization; HTTPS-only, retrying, per-sink-redacted audit sinks; signed checkpoints and `audit verify`. |
 
 Both **stdio** and **Streamable HTTP** transports are supported (see [Transports](#transports)).
 
