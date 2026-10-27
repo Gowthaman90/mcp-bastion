@@ -64,6 +64,56 @@ identities, violations }`, with violations such as `"agent:argument"` or `"clien
   `authorization-prereg-2026-10-26`) are replayed through a real gateway; each attack is refused before
   upstream contact with exactly the pre-registered violation, and each benign control is allowed.
 
+### Audit evidence and sinks
+
+Trustworthy audit evidence: sinks that are safe by default and survive failure, per-sink redaction, and
+signed checkpoints that make a shortened log or a deleted run detectable. New record kinds appear only
+when `audit.checkpoint` is configured; `AUDIT_SCHEMA_VERSION` stays `1`.
+
+- **Changed (may need a config change): remote audit sinks require HTTPS.** A `webhook` `url` or `otlp`
+  `endpoint` using plain `http://` to a non-loopback host is now a config error. Set
+  `allowInsecureTransport: true` on that sink to keep it (a warning is logged at startup).
+- **`headersEnv`** on the `webhook` and `otlp` sinks (header name → environment variable), so tokens stay
+  out of the config file; a missing variable stops startup. The `webhook` sink also accepts `headers`.
+- **Delivery that survives an outage.** A failed batch is no longer retried once and dropped: it goes back
+  to a bounded queue (`maxQueue`, default 10 000 events) and is retried with exponential backoff and
+  jitter (0.5 s doubling, 30 s cap). Beyond `maxQueue` the oldest events are dropped and counted.
+- **Sink health** in `bastion__status` (`audit.sinks`): `healthy`, `delivered`, `dropped`, `queued`,
+  `failedAttempts`, `lastError`, for every sink including the file sink.
+- **`audit.onSinkFailure`**: `continue` (default) or `block`. With `block`, calls are refused
+  (`blocked_audit_unavailable`) while no sink can deliver, for deployments where an unaudited call is not
+  acceptable.
+- **Per-sink `includeArgs`**, overriding `audit.includeArgs` per sink (e.g. full arguments to a local
+  file, none to a shared SIEM). When sinks differ and `tamperEvident` is on, events use **chain v2**
+  (`chainVersion: 2`): the hash covers the event without its `args` view plus `argsDigest` (HMAC-SHA256 of
+  the full arguments with the integrity key), so every sink verifies the same chain. Without an
+  integrity key, arguments are then not covered by the chain (a warning is logged). Sinks that agree keep
+  chain v1, unchanged.
+- **Every event carries `runId`.**
+- **`audit.checkpoint`** (opt-in, needs `tamperEvident`): each run starts with a chained `run-start`
+  record (seq 0) that links to the previous run's last checkpoint via `stateFile` (written `0600`), and an
+  Ed25519-signed `checkpoint` of the chain head is written every `everyEvents` (100) events, every
+  `everySeconds` (60) seconds when there is something new, and at shutdown, to every sink plus
+  checkpoint-only witness `sinks`. Consumers that assume every line is a call event should skip records
+  with a `recordType`.
+- **`mcp-bastion audit verify <log>`** checks the hash chain (v1 and v2, keyed via `--key-env`), seq
+  continuity, checkpoint signatures (`--public-key`), a log cut short or a deleted run (against a witness,
+  `--checkpoints`) and run links; exit 0 intact, 1 tampered, 2 cannot verify; `--json` for the report.
+  **`mcp-bastion audit keygen --out <dir>`** writes a checkpoint key pair and never overwrites. Limit: a
+  cut is detected only back to the last checkpoint that reached a witness the attacker cannot rewrite.
+- **Redaction.** Inline DLP now also catches GitHub fine-grained tokens, Stripe and Google API keys, npm
+  tokens, Slack webhook URLs, JWTs, `Bearer` credentials and passwords in URLs. On the new 39-case corpus
+  (`test/redaction-corpus.test.ts`) it went from 16/27 secrets caught and 2/12 benign values over-redacted
+  to 27/27 and 0/12. **Fixed:** a `NAME=secret` whose name starts with the credential word (`PASSWORD=…`,
+  `TOKEN: …`) was missed; booleans, null-ish words and short numbers (`max_tokens: 1500`) are no longer
+  redacted. **Changed:** JWTs and bearer credentials in tool results are now redacted by default; set
+  `security.redactResponseSecrets: false` if a tool must return one to the agent.
+- **Fixed:** with `redactResponseSecrets: false`, a secret in a tool result left no trace. It is now
+  recorded as a `secret-in-result` (high) response finding, and the result is left untouched.
+- **Fixed:** a refused HTTP bind (non-loopback without credentials) exited after the stdio upstreams were
+  spawned, orphaning them. The listener is checked before any upstream starts, and a later startup
+  failure closes the upstreams before exiting.
+
 ## [1.3.1] - 2026-10-26
 
 Fixes a crash in the audit file sink and picks up a `zod` security fix. Upgrading is recommended.
