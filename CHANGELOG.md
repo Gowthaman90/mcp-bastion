@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-26
+
+Fixes a crash in the audit file sink and picks up a `zod` security fix. Upgrading is recommended.
+
+- **Fixed:** an audit file that could not be opened (missing directory, no permission) crashed the
+  process with an unhandled `error` event shortly after startup. The file is now opened at startup, and a
+  bad path stops Bastion with a clear message: `audit file sink cannot open "<path>": <reason>`.
+- **Fixed:** a write error while running (for example a full disk) also crashed the process. The sink
+  now logs the error once, stops writing, and counts later events as dropped instead of throwing. Other
+  sinks and tool calls are unaffected, and `flush`/`close` return promptly on a failed stream.
+- **Changed:** a newly created audit file is readable and writable by its owner only (`0600`). An
+  existing file keeps its permissions; tighten them with `chmod 600 <file>` if needed.
+- New on `FileSink`: read-only `lastError` and `dropped`.
+- **Security (dependencies):** `zod` to 4.6.7 (minimum raised to `^4.6.6`) for
+  [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) (memory exhaustion while
+  validating oversized constrained collections). Bastion and the MCP SDK validate incoming messages with
+  zod, so it may be reachable; HTTP request bodies were already capped by `listen.maxBodyBytes` (1 MiB by
+  default), which limits the exposure. `npm audit --omit=dev` is clean. Dev: `body-parser` (via the test-only MCP
+  SDK 1.x) updated for GHSA-27r3-jxmh-p828.
+
 ## [1.3.0] - 2026-10-20
 
 Shadow-mode (`enforcementProfile: "observe"`) audit events now show everything enforcement would have
