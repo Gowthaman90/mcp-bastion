@@ -101,9 +101,12 @@ async function startGateway(extra: Record<string, unknown> = {}): Promise<{
     () => pfqa.close(),
     () => psqa.close(),
   );
+  const raw = rawConfig(pfqa.url, psqa.url, extra) as { security?: Record<string, unknown> };
   const mgr = new UpstreamManager(
     BastionConfigSchema.parse({
-      ...rawConfig(pfqa.url, psqa.url, extra),
+      ...raw,
+      // The fixture echoes the forwarded token in its result; keep it readable (DLP would redact a JWT).
+      security: { redactResponseSecrets: false, ...(raw.security ?? {}) },
       reconnect: { auto: false },
       healthCheck: { enabled: false },
     }),
@@ -262,6 +265,7 @@ describe("delegation checks end to end (CLI)", () => {
       configPath,
       JSON.stringify(
         rawConfig(pfqa.url, psqa.url, {
+          security: { redactResponseSecrets: false }, // the fixture echoes the token in its result
           audit: {
             enabled: true,
             includeArgs: "full",
@@ -417,6 +421,7 @@ describe("signature mode in the gateway", () => {
           },
         },
         listen: { mode: "http" },
+        security: { redactResponseSecrets: false }, // the fixture echoes the token in its result
         delegation: { gatewayAudiences: ["mcp-bastion"], subjectKey: SUBJECT_KEY },
         audit: { enabled: true, sinks: [{ type: "file", path: auditPath }] },
         reconnect: { auto: false },
