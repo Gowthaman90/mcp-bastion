@@ -587,24 +587,74 @@ export const SecurityConfigSchema = z
   .prefault({});
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 
+/** Loopback hosts, to which plain-HTTP audit delivery is allowed. */
+function isLoopbackUrlHost(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return (
+    host === "localhost" || host === "[::1]" || host === "::1" || /^127(\.\d{1,3}){3}$/.test(host)
+  );
+}
+
+/** Options shared by the HTTP audit sinks (webhook, OTLP). */
+const httpSinkFields = {
+  /** Extra headers sent with each request, e.g. a static routing header. */
+  headers: z.record(z.string(), z.string()).optional(),
+  /**
+   * Header name → environment variable holding its value, e.g.
+   * `{ "authorization": "AUDIT_WEBHOOK_TOKEN" }`, so secrets stay out of the config file. A missing
+   * variable stops Bastion at startup.
+   */
+  headersEnv: z.record(z.string(), z.string().min(1)).optional(),
+  batchSize: z.number().int().positive().default(20),
+  timeoutMs: z.number().int().positive().default(5_000),
+  /** Most events held while the receiver is unreachable; the oldest are dropped (and counted) beyond it. */
+  maxQueue: z.number().int().positive().default(10_000),
+  /**
+   * Allow plain `http://` to a non-loopback host. Off by default: audit events carry tool names,
+   * decisions and possibly arguments, and travel to a SIEM in clear text otherwise. Logs a warning.
+   */
+  allowInsecureTransport: z.boolean().default(false),
+};
+
+/** Remote audit delivery must be HTTPS unless the host is loopback or the sink opts out. */
+function requireHttps(field: "url" | "endpoint") {
+  return (cfg: Record<string, unknown>, ctx: z.RefinementCtx) => {
+    const target = String(cfg[field]);
+    if (
+      /^http:/i.test(target) &&
+      !isLoopbackUrlHost(target) &&
+      cfg.allowInsecureTransport !== true
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: [field],
+        message: `${field} must use HTTPS for a non-loopback host (audit events would travel in clear text); set allowInsecureTransport: true on this sink to accept that`,
+      });
+    }
+  };
+}
+
 /** Where audit events are delivered. */
 export const SinkConfigSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("console") }),
   z.object({ type: z.literal("file"), path: z.string().min(1) }),
-  z.object({
-    type: z.literal("webhook"),
-    url: z.string().url(),
-    batchSize: z.number().int().positive().default(20),
-    timeoutMs: z.number().int().positive().default(5_000),
-  }),
-  z.object({
-    type: z.literal("otlp"),
-    /** Base OTLP/HTTP endpoint, e.g. `http://localhost:4318` (the `/v1/logs` path is appended). */
-    endpoint: z.string().url(),
-    headers: z.record(z.string(), z.string()).optional(),
-    batchSize: z.number().int().positive().default(50),
-    timeoutMs: z.number().int().positive().default(5_000),
-  }),
+  z
+    .object({ type: z.literal("webhook"), url: z.string().url(), ...httpSinkFields })
+    .superRefine(requireHttps("url")),
+  z
+    .object({
+      type: z.literal("otlp"),
+      /** Base OTLP/HTTP endpoint, e.g. `http://localhost:4318` (the `/v1/logs` path is appended). */
+      endpoint: z.string().url(),
+      ...httpSinkFields,
+      batchSize: z.number().int().positive().default(50),
+    })
+    .superRefine(requireHttps("endpoint")),
 ]);
 export type SinkConfig = z.infer<typeof SinkConfigSchema>;
 
@@ -630,6 +680,12 @@ export const AuditConfigSchema = z
     integrityKey: z.string().optional(),
     /** Destinations for audit events. */
     sinks: z.array(SinkConfigSchema).default([{ type: "console" }]),
+    /**
+     * What happens to tool calls when NO configured sink can deliver (every sink unhealthy):
+     * `continue` (default) keeps serving; `block` refuses calls (`blocked_audit_unavailable`) until a
+     * sink recovers, for deployments where an unaudited call is not acceptable.
+     */
+    onSinkFailure: z.enum(["continue", "block"]).default("continue"),
   })
   .prefault({});
 export type AuditConfig = z.infer<typeof AuditConfigSchema>;

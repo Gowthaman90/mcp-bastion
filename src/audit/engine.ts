@@ -11,6 +11,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { ToolCallOutcome } from "../security/types.js";
 
 import type { AuditConfig } from "../config/index.js";
+import { textResult } from "../internal/results.js";
 import { logger } from "../observability/index.js";
 import { findingKind, type Interceptor, type ToolCallContext } from "../security/index.js";
 import { chainHash } from "./chain.js";
@@ -22,6 +23,7 @@ import {
   type AuditEvent,
   type AuditOutcome,
   type AuditSink,
+  type SinkHealth,
 } from "./types.js";
 
 export class AuditEngine {
@@ -53,6 +55,20 @@ export class AuditEngine {
     return async (ctx, next) => {
       const traceId = randomUUID();
       const start = Date.now();
+      if (this.config.onSinkFailure === "block" && this.allSinksDown()) {
+        ctx.securityDecision = "blocked_audit_unavailable";
+        logger.error(
+          { tool: ctx.namespacedName },
+          "call refused: no audit sink can deliver (onSinkFailure: block)",
+        );
+        const refused = textResult(
+          `Blocked by mcp-bastion: the audit trail is unavailable, and this deployment refuses calls that ` +
+            `cannot be recorded. Try again later or ask an operator to check the audit sinks.`,
+          true,
+        );
+        this.record(ctx, traceId, 0, refused, false);
+        return refused;
+      }
       try {
         const result = await next();
         this.record(ctx, traceId, Date.now() - start, result, false);
@@ -83,6 +99,19 @@ export class AuditEngine {
         owaspLlm: { ...this.totals.controls.owaspLlm },
       },
     };
+  }
+
+  /** Delivery health of every sink that reports it (backs `bastion__status`). */
+  sinkHealth(): SinkHealth[] {
+    return this.sinks.flatMap((s) => (s.health ? [s.health()] : []));
+  }
+
+  /** True when every sink reports health and none can deliver. A sink without health counts as up. */
+  private allSinksDown(): boolean {
+    return (
+      this.sinks.length > 0 &&
+      this.sinks.every((s) => s.health !== undefined && !s.health().healthy)
+    );
   }
 
   /** Flush all sinks. */

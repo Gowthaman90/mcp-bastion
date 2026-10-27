@@ -22,7 +22,8 @@ export type AuditDecision =
   | "blocked_input_required"
   | "blocked_request_state"
   | "blocked_delegation"
-  | "blocked_authorization";
+  | "blocked_authorization"
+  | "blocked_audit_unavailable";
 
 /** The observed outcome of a tool call. */
 export type AuditOutcome = "ok" | "error" | "blocked";
@@ -147,4 +148,22 @@ export interface AuditSink {
   flush(): Promise<void>;
   /** Flush and release resources. */
   close(): Promise<void>;
+  /** Delivery health, surfaced in `bastion__status` and used by `audit.onSinkFailure`. */
+  health?(): SinkHealth;
+}
+
+/** Delivery health of one audit sink. */
+export interface SinkHealth {
+  name: string;
+  /** `false` while the sink cannot deliver (stream error, or the last delivery attempt failed). */
+  healthy: boolean;
+  /** Events delivered (HTTP sinks) or written (file sink). */
+  delivered: number;
+  /** Events lost: queue overflow, a failed file stream, or undelivered at close. */
+  dropped: number;
+  /** Events waiting for delivery (HTTP sinks). */
+  queued: number;
+  /** Failed delivery attempts so far (HTTP sinks). */
+  failedAttempts: number;
+  lastError?: string;
 }

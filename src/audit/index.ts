@@ -20,4 +20,5 @@ export type {
   AuditDelegationRecord,
   AuditAuthorizationRecord,
   AuditFinding,
+  SinkHealth,
 } from "./types.js";

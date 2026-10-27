@@ -22,6 +22,11 @@ export function frameworksFor(
   // Observing and recording every tool call is itself a MEASURE activity.
   nist.add("MEASURE");
 
+  if (decision === "blocked_audit_unavailable") {
+    // Fail-closed on a lost audit trail: a governance control (record-keeping) enforced at runtime.
+    nist.add("GOVERN");
+    nist.add("MANAGE");
+  }
   if (decision === "blocked_rug_pull") {
     nist.add("MANAGE");
     owasp.add("LLM03: Training Data / Supply Chain");

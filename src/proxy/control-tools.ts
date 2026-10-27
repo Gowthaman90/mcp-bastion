@@ -102,9 +102,14 @@ export async function handleControlTool(
 
   if (name === controlToolName(ControlAction.Status, separator)) {
     const authorization = manager.authorizationStatus();
+    const audit = manager.auditStatus();
     return textResult(
       JSON.stringify(
-        { servers: manager.status(), ...(authorization ? { authorization } : {}) },
+        {
+          servers: manager.status(),
+          ...(authorization ? { authorization } : {}),
+          ...(audit ? { audit } : {}),
+        },
         null,
         2,
       ),

@@ -4,14 +4,14 @@
  * from there to any backend (SIEM, cloud logging, object storage, …) — so this
  * one sink effectively unlocks the whole OTel ecosystem.
  *
- * Dependency-free: uses the global `fetch`. Events are batched; `write` never
- * blocks, and `flush`/`close` await in-flight exports. One retry on failure.
+ * Dependency-free: uses the global `fetch`. Delivery (bounded queue, retry with
+ * backoff, drop-oldest, health counters) is shared with the webhook sink.
  *
  * @packageDocumentation
  */
 import { BASTION_NAME, BASTION_VERSION } from "../../core/constants.js";
-import { logger } from "../../observability/index.js";
-import type { AuditEvent, AuditSink } from "../types.js";
+import type { AuditEvent } from "../types.js";
+import { HttpBatchSink } from "./http-batch.js";
 
 export interface OtlpSinkOptions {
   /** Base OTLP/HTTP endpoint, e.g. `http://localhost:4318` (the `/v1/logs` path is appended). */
@@ -20,6 +20,8 @@ export interface OtlpSinkOptions {
   headers?: Record<string, string>;
   batchSize: number;
   timeoutMs: number;
+  /** Most events held while the collector is unreachable. Default 10 000. */
+  maxQueue?: number;
 }
 
 /** An OTLP key/value attribute. */
@@ -82,63 +84,22 @@ export function toOtlpLogs(events: readonly AuditEvent[]): unknown {
   };
 }
 
-export class OtlpSink implements AuditSink {
+export class OtlpSink extends HttpBatchSink {
   readonly name: string;
-  private buffer: AuditEvent[] = [];
-  private readonly pending = new Set<Promise<void>>();
-  private readonly url: string;
 
-  constructor(private readonly opts: OtlpSinkOptions) {
-    this.url = `${opts.endpoint.replace(/\/+$/, "")}/v1/logs`;
-    this.name = `otlp:${this.url}`;
+  constructor(opts: OtlpSinkOptions) {
+    const url = `${opts.endpoint.replace(/\/+$/, "")}/v1/logs`;
+    super({
+      url,
+      headers: opts.headers,
+      batchSize: opts.batchSize,
+      timeoutMs: opts.timeoutMs,
+      maxQueue: opts.maxQueue ?? 10_000,
+    });
+    this.name = `otlp:${url}`;
   }
 
-  write(event: AuditEvent): void {
-    this.buffer.push(event);
-    if (this.buffer.length >= this.opts.batchSize) this.dispatch();
-  }
-
-  async flush(): Promise<void> {
-    this.dispatch();
-    await Promise.all([...this.pending]);
-  }
-
-  async close(): Promise<void> {
-    await this.flush();
-  }
-
-  private dispatch(): void {
-    if (this.buffer.length === 0) return;
-    const batch = this.buffer;
-    this.buffer = [];
-    const task = this.send(batch).finally(() => this.pending.delete(task));
-    this.pending.add(task);
-  }
-
-  private async send(events: AuditEvent[], attempt = 0): Promise<void> {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs);
-      try {
-        const res = await fetch(this.url, {
-          method: "POST",
-          headers: { "content-type": "application/json", ...(this.opts.headers ?? {}) },
-          body: JSON.stringify(toOtlpLogs(events)),
-          signal: controller.signal,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      } finally {
-        clearTimeout(timer);
-      }
-    } catch (err) {
-      if (attempt === 0) {
-        await this.send(events, 1); // one retry
-        return;
-      }
-      logger.warn(
-        { sink: this.name, count: events.length, err: (err as Error)?.message ?? String(err) },
-        "OTLP export failed",
-      );
-    }
+  protected body(events: AuditEvent[]): unknown {
+    return toOtlpLogs(events);
   }
 }
