@@ -163,14 +163,85 @@ describe("authorize: per-identity verdicts", () => {
     ).toEqual(["client:argument"]);
   });
 
-  it("a deny with argument constraints applies only when they hold (missing = does not hold)", () => {
+  it("a deny with argument constraints fails closed: it applies unless they evaluate and do not hold", () => {
     const host = { client: "agent-host", user: "user:mei.l", agent: "platform-agent" };
+    // Evaluated and matching: refused.
     expect(authorize(policy, host, "deploy__rollback", { env: "prod" })).toMatchObject({
       allowed: false,
       rule: "no-prod-rollback",
     });
+    // Evaluated and not matching: the deny does not apply.
     expect(authorize(policy, host, "deploy__rollback", { env: "staging" }).allowed).toBe(true);
-    expect(authorize(policy, host, "deploy__rollback", {}).allowed).toBe(true);
+    // Argument missing: cannot be evaluated, so the deny applies (stricter than prereg §4 rule 3).
+    expect(authorize(policy, host, "deploy__rollback", {})).toMatchObject({
+      allowed: false,
+      rule: "no-prod-rollback",
+      violations: ["client:denied", "user:denied", "agent:denied"],
+    });
+    expect(authorize(policy, host, "deploy__rollback", null).rule).toBe("no-prod-rollback");
+    // Wrong type: cannot be compared, so the deny applies.
+    for (const env of [1, true, null, ["prod"], { name: "prod" }]) {
+      expect(authorize(policy, host, "deploy__rollback", { env }).rule).toBe("no-prod-rollback");
+    }
+  });
+
+  it.each([
+    // [constraint, value, deny applies]
+    [{ min: 100 }, 500, true],
+    [{ min: 100 }, 50, false],
+    [{ min: 100 }, "500", true],
+    [{ min: 100 }, undefined, true],
+    [{ in: ["prod", "dr"] }, "dr", true],
+    [{ in: ["prod", "dr"] }, "staging", false],
+    [{ in: ["prod", "dr"] }, 7, true],
+    [{ equals: 0 }, "0", true],
+    [{ equals: 0 }, 1, false],
+    [{ pathWithin: "/secrets" }, "/secrets/../secrets/key", true],
+    [{ pathWithin: "/secrets" }, "/public/a", false],
+    [{ pathWithin: "/secrets" }, "secrets/key", true],
+    [{ pathWithin: "/secrets" }, "/secrets\0/key", true],
+    [{ pathWithin: "/secrets" }, 42, true],
+  ] as const)("deny %j with value %j → applies: %s", (constraint, value, applies) => {
+    const p: AuthorizationPolicy = {
+      default: "deny",
+      rules: [
+        { id: "all", effect: "allow", principal: "*", tools: ["t__x"] },
+        { id: "guard", effect: "deny", principal: "*", tools: ["t__x"], args: { v: constraint } },
+      ],
+    };
+    const args = value === undefined ? {} : { v: value };
+    expect(authorize(p, { client: "c" }, "t__x", args).allowed).toBe(!applies);
+  });
+
+  it("a deny with several constraints does not apply once one evaluates and fails", () => {
+    const p: AuthorizationPolicy = {
+      default: "deny",
+      rules: [
+        { id: "all", effect: "allow", principal: "*", tools: ["t__x"] },
+        {
+          id: "guard",
+          effect: "deny",
+          principal: "*",
+          tools: ["t__x"],
+          args: { env: { equals: "prod" }, amount: { min: 1000 } },
+        },
+      ],
+    };
+    expect(authorize(p, { client: "c" }, "t__x", { env: "prod", amount: 5000 }).allowed).toBe(
+      false,
+    );
+    expect(authorize(p, { client: "c" }, "t__x", { env: "prod" }).allowed).toBe(false); // amount missing
+    expect(authorize(p, { client: "c" }, "t__x", { env: "qa" }).allowed).toBe(true); // env evaluates, fails
+    expect(authorize(p, { client: "c" }, "t__x", { env: "prod", amount: 10 }).allowed).toBe(true);
+  });
+
+  it("allow rules are unchanged: a missing or wrong-type argument still fails the allow", () => {
+    expect(authorize(policy, { client: "ci-bot" }, "ci__extend_timeout", {}).violations).toEqual([
+      "client:argument",
+    ]);
+    expect(
+      authorize(policy, { client: "ci-bot" }, "ci__extend_timeout", { minutes: "30" }).violations,
+    ).toEqual(["client:argument"]);
   });
 
   it("default allow grants tools with no allow rule, but still enforces scoped allows and denies", () => {
@@ -214,7 +285,9 @@ describe("authorize: intersection across client, user and agent", () => {
     ).toEqual(["agent:no-grant"]);
     // The agent's broad grant is not used for a user who lacks it (confused deputy).
     expect(
-      authorize(policy, host("user:omar.s", "platform-agent"), "deploy__rollback", {}).violations,
+      authorize(policy, host("user:omar.s", "platform-agent"), "deploy__rollback", {
+        env: "staging",
+      }).violations,
     ).toEqual(["user:no-grant"]);
   });
 

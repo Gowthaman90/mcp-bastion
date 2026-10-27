@@ -92,10 +92,10 @@ export function buildBastionServer(
     logger.debug({ tool: name, principal, client }, "tools/call");
     if (isControlToolName(name, manager.separator)) {
       const controlArgs = (args ?? {}) as Record<string, unknown>;
-      // Control tools are authorized under server name `bastion` before they run.
-      const refused = manager.authorizeControlTool(name, controlArgs, client, principal);
-      if (refused) return refused;
-      return handleControlTool(name, controlArgs, manager);
+      // Control tools are authorized under server name `bastion` before they run, and audited.
+      return manager.callControlTool(name, controlArgs, { client, principal }, () =>
+        handleControlTool(name, controlArgs, manager),
+      );
     }
     const mcpReq = ctx.mcpReq as {
       inputResponses?: Record<string, unknown>;

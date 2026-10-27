@@ -22,14 +22,22 @@ changes are additive; `AUDIT_SCHEMA_VERSION` stays `1`.
   grants. Per identity, a matching deny wins (deny overrides allow); otherwise an allow whose argument
   constraints all hold is needed. Matching is exact: no case folding, Unicode normalisation or type
   coercion; `max`/`min` accept JSON numbers only; `pathWithin` resolves `.` and `..` (nothing is
-  percent-decoded) and checks the boundary at `/`; a missing constrained argument fails. A deny rule
-  with `args` applies only when its constraints hold. Under `default: "allow"`, an identity with no
-  allow rule for the tool is permitted, but one whose allow rules all fail their argument constraints is
-  still refused.
+  percent-decoded) and checks the boundary at `/`; a missing constrained argument fails an allow. Under
+  `default: "allow"`, an identity with no allow rule for the tool is permitted, but one whose allow
+  rules all fail their argument constraints is still refused.
+- **Deny rules with `args` fail closed.** A deny applies unless its constraints evaluate and do not
+  hold: a missing constrained argument, or one of a type the constraint cannot compare (a non-number
+  for `max`/`min`, a value of a different JSON type for `equals`/`in`, a relative or NUL-containing
+  path for `pathWithin`), refuses the call. A deny whose constraints evaluate and do not match does not
+  apply. This is deliberately stricter than rule 3 of mcp-defense-bench's authorization pre-registration
+  (§4), where a deny applies only when its `args` are satisfied. Allow rules are unchanged.
 - **Where it runs.** In `tools/call`, after the delegation checks and before any upstream contact, so a
   refused call never opens an on-demand connection carrying the caller's forwarded headers. MRTR retries
   are re-authorized. Control tools (`bastion__*`) are authorized under server name `bastion`, which is
-  then reserved. `tools/list` hides a tool when some identity could never be allowed it (whatever the
+  then reserved, and every control-tool call is audited with its `authorization` decision: refused
+  calls as `blocked_authorization`, allowed ones with their real outcome (and `wouldBlock` when a `warn`
+  action let a refused one through). Control-tool calls are still not audited with authorization
+  disabled. `tools/list` hides a tool when some identity could never be allowed it (whatever the
   arguments), and does not connect an idle on-demand upstream none of whose tools the client could be
   allowed.
 - **`listen.clients`**: named HTTP clients, each with its own bearer token read from an environment

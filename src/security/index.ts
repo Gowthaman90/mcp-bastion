@@ -87,6 +87,9 @@ export {
   resolvePosixPath,
   satisfiesConstraint,
   argumentsSatisfied,
+  evaluateConstraint,
+  evaluateArguments,
+  denyApplies,
   principalMatches,
   IDENTITY_KINDS,
 } from "./authorization.js";
@@ -98,6 +101,7 @@ export type {
   AuthorizationRule,
   AuthorizationScalar,
   CallIdentities,
+  ConstraintResult,
   IdentityKind,
   IdentityVerdict,
   RulePrincipal,

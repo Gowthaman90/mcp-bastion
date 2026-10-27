@@ -196,7 +196,10 @@ describe("named clients over HTTP (listen.clients)", () => {
       events.filter((e) => (e.authorization as { client?: string } | undefined)?.client === c);
     expect(byClient("ops").map((e) => e.decision)).toEqual(["allowed", "blocked_authorization"]);
     expect(byClient("intern").map((e) => e.decision)).toEqual(["blocked_authorization", "allowed"]);
-    expect(byClient("default").map((e) => e.decision)).toEqual(["blocked_authorization"]);
+    expect(byClient("default").map((e) => [e.namespacedName, e.decision])).toEqual([
+      ["files__read_file", "blocked_authorization"],
+      ["bastion__status", "allowed"],
+    ]);
     const denied = byClient("ops")[1];
     expect(denied).toMatchObject({
       server: "files",
@@ -370,6 +373,67 @@ describe("control tools", () => {
     });
   });
 
+  it("audits every control-tool call with its authorization decision", async () => {
+    const g = await gateway({
+      authorization: {
+        rules: [
+          {
+            id: "ops-control",
+            effect: "allow",
+            principal: { client: "ops" },
+            tools: ["bastion__*"],
+          },
+        ],
+      },
+    });
+    const ops = await client(g.listener.url, bearer(TOKENS.ops));
+    const intern = await client(g.listener.url, bearer(TOKENS.intern));
+    expect((await ops.callTool({ name: "bastion__status", arguments: {} })).isError).toBeFalsy();
+    expect((await ops.callTool({ name: "bastion__approve", arguments: {} })).isError).toBe(true);
+    expect((await intern.callTool({ name: "bastion__security", arguments: {} })).isError).toBe(
+      true,
+    );
+    const events = await g.audit();
+    expect(events.map((e) => [e.namespacedName, e.decision, e.outcome])).toEqual([
+      ["bastion__status", "allowed", "ok"],
+      ["bastion__approve", "allowed", "error"], // allowed by policy, refused as operator-only
+      ["bastion__security", "blocked_authorization", "blocked"],
+    ]);
+    expect(events[0]).toMatchObject({
+      server: "bastion",
+      tool: "status",
+      authorization: {
+        effect: "allow",
+        rule: "ops-control",
+        client: "ops",
+        identities: ["client"],
+      },
+      hash: expect.any(String), // in the tamper-evident chain
+    });
+    expect(events[0]).not.toHaveProperty("wouldBlock");
+    expect(events[2]).toMatchObject({ authorization: { effect: "deny", client: "intern" } });
+  });
+
+  it("under observe, audits a control-tool call the policy would refuse with wouldBlock", async () => {
+    const g = await gateway({
+      authorization: { rules: [] },
+      security: { enforcementProfile: "observe" },
+    });
+    const intern = await client(g.listener.url, bearer(TOKENS.intern));
+    const status = await intern.callTool({ name: "bastion__status", arguments: {} });
+    expect(status.isError).toBeFalsy();
+    const events = await g.audit();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      server: "bastion",
+      namespacedName: "bastion__status",
+      decision: "allowed",
+      outcome: "ok",
+      wouldBlock: "blocked_authorization",
+      authorization: { effect: "deny", client: "intern", violations: ["client:no-grant"] },
+    });
+  });
+
   it("are unaffected while authorization is disabled", async () => {
     const g = await gateway({ authorization: { enabled: false } });
     const intern = await client(g.listener.url, bearer(TOKENS.intern));
@@ -380,6 +444,7 @@ describe("control tools", () => {
       textOf(await intern.callTool({ name: "bastion__status", arguments: {} })),
     );
     expect(status).not.toHaveProperty("authorization");
+    expect(await g.audit()).toEqual([]); // control tools are audited only under authorization
   });
 });
 

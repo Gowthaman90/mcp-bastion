@@ -10,7 +10,8 @@
  * The decision is an intersection: the call is allowed only if **every** identity it carries is
  * permitted, so an agent acting for a user needs both the user's grant and its own. Per identity,
  * a matching `deny` wins over any `allow` (deny overrides allow); otherwise an `allow` whose
- * argument constraints all hold is needed. The evaluator is pure: no I/O, no clock, no config
+ * argument constraints all hold is needed. A deny with argument constraints fails closed: it
+ * applies unless its constraints evaluate and do not hold. The evaluator is pure: no I/O, no clock, no config
  * parsing.
  *
  * @packageDocumentation
@@ -174,46 +175,112 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 /**
- * Whether one argument satisfies its constraints. `present` is `false` for a missing argument,
- * which fails any constraint.
+ * The result of evaluating constraints on an argument: they `hold`, they evaluate and `fail`, or
+ * they cannot be evaluated (`unevaluable`: the argument is missing, or its type is one the
+ * constraint cannot compare). An allow needs `holds`; a deny applies unless the result is `fails`.
+ */
+export type ConstraintResult = "holds" | "fails" | "unevaluable";
+
+/** Combine per-constraint results: any `fails` wins, then any `unevaluable`, else `holds`. */
+function combine(results: readonly ConstraintResult[]): ConstraintResult {
+  if (results.includes("fails")) return "fails";
+  return results.includes("unevaluable") ? "unevaluable" : "holds";
+}
+
+/**
+ * Evaluate one argument against its constraints. `present` is `false` for a missing argument.
+ * A value whose type a constraint cannot compare is `unevaluable`: for `equals`, a non-scalar or a
+ * scalar of a different JSON type; for `in`, one matching the type of no member; for `max`/`min`,
+ * anything but a finite JSON number (a numeric string included); for `pathWithin`, anything but an
+ * absolute POSIX path without NUL.
+ */
+export function evaluateConstraint(
+  constraint: ArgumentConstraint,
+  present: boolean,
+  value: unknown,
+): ConstraintResult {
+  if (!present) return "unevaluable";
+  const results: ConstraintResult[] = [];
+  if (constraint.equals !== undefined) {
+    const expected = constraint.equals;
+    results.push(
+      !isComparableScalar(value) || typeof value !== typeof expected
+        ? "unevaluable"
+        : value === expected
+          ? "holds"
+          : "fails",
+    );
+  }
+  if (constraint.in !== undefined) {
+    const members = constraint.in;
+    results.push(
+      !isComparableScalar(value) || !members.some((v) => typeof v === typeof value)
+        ? "unevaluable"
+        : members.some((v) => v === value)
+          ? "holds"
+          : "fails",
+    );
+  }
+  if (constraint.max !== undefined) {
+    const max = constraint.max;
+    results.push(!isFiniteNumber(value) ? "unevaluable" : value <= max ? "holds" : "fails");
+  }
+  if (constraint.min !== undefined) {
+    const min = constraint.min;
+    results.push(!isFiniteNumber(value) ? "unevaluable" : value >= min ? "holds" : "fails");
+  }
+  if (constraint.pathWithin !== undefined) {
+    results.push(
+      typeof value !== "string" || resolvePosixPath(value) === undefined
+        ? "unevaluable"
+        : isPathWithin(constraint.pathWithin, value)
+          ? "holds"
+          : "fails",
+    );
+  }
+  return combine(results);
+}
+
+/**
+ * Whether one argument satisfies its constraints (they evaluate and hold). A missing argument, or
+ * one of a type the constraint cannot compare, does not.
  */
 export function satisfiesConstraint(
   constraint: ArgumentConstraint,
   present: boolean,
   value: unknown,
 ): boolean {
-  if (!present) return false;
-  if (constraint.equals !== undefined) {
-    if (!isComparableScalar(value) || value !== constraint.equals) return false;
-  }
-  if (constraint.in !== undefined) {
-    if (!isComparableScalar(value) || !constraint.in.some((v) => v === value)) return false;
-  }
-  if (constraint.max !== undefined) {
-    if (!isFiniteNumber(value) || value > constraint.max) return false;
-  }
-  if (constraint.min !== undefined) {
-    if (!isFiniteNumber(value) || value < constraint.min) return false;
-  }
-  if (constraint.pathWithin !== undefined) {
-    if (!isPathWithin(constraint.pathWithin, value)) return false;
-  }
-  return true;
+  return evaluateConstraint(constraint, present, value) === "holds";
 }
 
-/** Whether every argument constraint of `rule` holds for `args` (a rule without `args` holds). */
-export function argumentsSatisfied(rule: AuthorizationRule, args: unknown): boolean {
-  if (!rule.args) return true;
+/** Evaluate every argument constraint of `rule` against `args` (a rule without `args` holds). */
+export function evaluateArguments(rule: AuthorizationRule, args: unknown): ConstraintResult {
+  if (!rule.args) return "holds";
   const record =
     args !== null && typeof args === "object" && !Array.isArray(args)
       ? (args as Record<string, unknown>)
       : {};
+  const results: ConstraintResult[] = [];
   for (const [name, constraint] of Object.entries(rule.args)) {
     const present =
       Object.prototype.hasOwnProperty.call(record, name) && record[name] !== undefined;
-    if (!satisfiesConstraint(constraint, present, present ? record[name] : undefined)) return false;
+    results.push(evaluateConstraint(constraint, present, present ? record[name] : undefined));
   }
-  return true;
+  return combine(results);
+}
+
+/** Whether every argument constraint of `rule` holds for `args` (a rule without `args` holds). */
+export function argumentsSatisfied(rule: AuthorizationRule, args: unknown): boolean {
+  return evaluateArguments(rule, args) === "holds";
+}
+
+/**
+ * Whether a deny rule applies to `args`. Fails closed: it applies unless its constraints evaluate
+ * and do not hold, so a missing argument, or one of a type the constraint cannot compare, is
+ * refused. (Stricter than the benchmark's prereg §4 rule 3, where a deny needs its args satisfied.)
+ */
+export function denyApplies(rule: AuthorizationRule, args: unknown): boolean {
+  return evaluateArguments(rule, args) !== "fails";
 }
 
 /** Whether `rule` applies to the identity `kind` = `id` (ignoring tools). */
@@ -245,7 +312,7 @@ function judgeIdentity(
   args: unknown,
 ): IdentityVerdict {
   const rules = applicableRules(policy, kind, id, tool);
-  const deny = rules.find((r) => r.effect === "deny" && argumentsSatisfied(r, args));
+  const deny = rules.find((r) => r.effect === "deny" && denyApplies(r, args));
   if (deny) return { kind, permitted: false, reason: "denied", rule: deny.id };
   const allows = rules.filter((r) => r.effect === "allow");
   if (allows.length === 0) {

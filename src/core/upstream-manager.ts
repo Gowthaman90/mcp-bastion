@@ -483,17 +483,37 @@ export class UpstreamManager {
   }
 
   /**
-   * Authorize a control-tool call (`bastion__*`), under server name `bastion` with the client as the
-   * only identity. Returns the refusal, or `undefined` when the call may go ahead.
+   * Run a control-tool call (`bastion__*`) under runtime authorization: authorized under server name
+   * `bastion` with the client as the only identity, before `run` executes. With `authorization`
+   * enabled, every such call is audited with its decision: a refusal as `blocked_authorization`, an
+   * allowed call (including one a `warn` action let through, with `wouldBlock`) through the audit
+   * interceptor with its real outcome. With authorization disabled, `run` executes as before.
    */
-  authorizeControlTool(
+  async callControlTool(
     name: string,
     args: Record<string, unknown>,
-    client = "stdio",
-    principal = "stdio",
-  ): CallToolResult | undefined {
+    opts: { client?: string; principal?: string },
+    run: () => Promise<CallToolResult>,
+  ): Promise<CallToolResult> {
+    const client = opts.client ?? "stdio";
+    const principal = opts.principal ?? "stdio";
     const check = this.authorization.check(CONTROL_SERVER, name, args, client);
-    return this.authorizationPreflight(CONTROL_SERVER, name, args, principal, check);
+    if (!check) return run();
+    const refused = this.authorizationPreflight(CONTROL_SERVER, name, args, principal, check);
+    if (refused) return refused;
+    if (!this.audit) return run();
+    const prefix = CONTROL_SERVER + this.separator;
+    const ctx: ToolCallContext = {
+      server: CONTROL_SERVER,
+      toolName: name.startsWith(prefix) ? name.slice(prefix.length) : name,
+      namespacedName: name,
+      args,
+      principal,
+      authorization: check.record,
+      ...(check.wouldBlock ? { wouldBlock: "blocked_authorization" as const } : {}),
+    };
+    // Only the audit interceptor: the security interceptors police upstream tools, not Bastion's own.
+    return (await runPipeline([this.audit.buildInterceptor()], ctx, run)) as CallToolResult;
   }
 
   /** Whether a control tool belongs in `client`'s `tools/list`. */
