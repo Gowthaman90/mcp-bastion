@@ -8,6 +8,7 @@ export { broadcastToolsChanged, addToolsChangedTarget } from "./bastion-server.j
 export type { BastionServerOptions } from "./bastion-server.js";
 export { buildControlTools, isControlToolName, handleControlTool } from "./control-tools.js";
 export {
+  checkHttpListenOptions,
   startHttpServer,
   principalOf,
   clientOf,

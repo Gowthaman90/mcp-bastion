@@ -151,15 +151,18 @@ export interface HttpListener {
 }
 
 /**
- * Start the Streamable HTTP server. Resolves once it is listening.
- *
- * @param manager The shared upstream manager backing every request.
- * @param opts    Bind host/port/path and gates.
+ * Check the HTTP listener's credentials and bind without starting anything: empty or duplicate client
+ * tokens, and an unauthenticated non-loopback bind, throw. The CLI calls it before any upstream is
+ * spawned, so a refused configuration never leaves child processes behind.
  */
-export async function startHttpServer(
-  manager: UpstreamManager,
-  opts: HttpListenOptions,
-): Promise<HttpListener> {
+export function checkHttpListenOptions(
+  opts: Pick<HttpListenOptions, "host" | "authToken" | "clients">,
+): void {
+  credentialsOf(opts);
+}
+
+/** Validate the listener's credentials and bind; returns them with their digests. */
+function credentialsOf(opts: Pick<HttpListenOptions, "host" | "authToken" | "clients">) {
   const credentials = [
     ...(opts.authToken ? [{ name: "default", token: opts.authToken }] : []),
     ...(opts.clients ?? []),
@@ -177,6 +180,20 @@ export async function startHttpServer(
         `an unauthenticated public bind would expose every proxied tool. Set listen.authToken or bind 127.0.0.1.`,
     );
   }
+  return credentials;
+}
+
+/**
+ * Start the Streamable HTTP server. Resolves once it is listening.
+ *
+ * @param manager The shared upstream manager backing every request.
+ * @param opts    Bind host/port/path and gates.
+ */
+export async function startHttpServer(
+  manager: UpstreamManager,
+  opts: HttpListenOptions,
+): Promise<HttpListener> {
+  const credentials = credentialsOf(opts);
   const maxBodyBytes = opts.maxBodyBytes ?? 1_048_576;
 
   // One front-door Server per request (stateless core); the principal is derived from the bearer

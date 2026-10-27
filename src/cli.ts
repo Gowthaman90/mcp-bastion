@@ -18,6 +18,7 @@ import { logger } from "./observability/index.js";
 import {
   broadcastToolsChanged,
   buildBastionServer,
+  checkHttpListenOptions,
   resolveListenClients,
   startHttpServer,
 } from "./proxy/index.js";
@@ -48,9 +49,44 @@ async function run(opts: { config?: string; http?: string }): Promise<void> {
       "no --config provided: starting with no upstream servers, so only Bastion's control tools are exposed. Pass --config <path> to put Bastion in front of your MCP servers.",
     );
   }
+  // Resolve and check the client-facing transport BEFORE any upstream is spawned, so a refused
+  // configuration (bad port, unauthenticated public bind, bad client tokens) leaves no child processes.
+  const cliPort = opts.http !== undefined ? Number(opts.http) : undefined;
+  if (cliPort !== undefined && !Number.isInteger(cliPort)) {
+    throw new Error(`--http expects a port number, got "${opts.http}"`);
+  }
+  const useHttp = cliPort !== undefined || config.listen.mode === "http";
+  const clients = useHttp ? resolveListenClients(config.listen) : [];
+  if (useHttp) {
+    checkHttpListenOptions({
+      host: config.listen.host,
+      authToken: config.listen.authToken,
+      clients,
+    });
+  }
+
   const manager = new UpstreamManager(config);
   manager.setToolsChangedCallback(() => broadcastToolsChanged());
+  try {
+    await startServing(manager, config, { cliPort, useHttp, clients });
+  } catch (err) {
+    // Upstreams may already be running: close them before the fatal exit so none is orphaned.
+    await manager.closeAll().catch(() => undefined);
+    throw err;
+  }
+}
 
+/** Connect upstreams, start health checks and the client-facing transport, and wire shutdown. */
+async function startServing(
+  manager: UpstreamManager,
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  t: {
+    cliPort: number | undefined;
+    useHttp: boolean;
+    clients: ReturnType<typeof resolveListenClients>;
+  },
+): Promise<void> {
+  const { cliPort, useHttp, clients } = t;
   // Connect upstreams first so the initial tools/list is populated.
   await manager.connectAll();
 
@@ -65,13 +101,6 @@ async function run(opts: { config?: string; http?: string }): Promise<void> {
     healthTimer.unref?.();
   }
 
-  // Resolve the client-facing transport (a `--http <port>` flag overrides config).
-  const cliPort = opts.http !== undefined ? Number(opts.http) : undefined;
-  if (cliPort !== undefined && !Number.isInteger(cliPort)) {
-    throw new Error(`--http expects a port number, got "${opts.http}"`);
-  }
-  const useHttp = cliPort !== undefined || config.listen.mode === "http";
-
   let closeListener: () => Promise<void>;
   if (useHttp) {
     const listener = await startHttpServer(manager, {
@@ -79,7 +108,7 @@ async function run(opts: { config?: string; http?: string }): Promise<void> {
       port: cliPort ?? config.listen.port,
       path: config.listen.path,
       authToken: config.listen.authToken,
-      clients: resolveListenClients(config.listen),
+      clients,
       maxSessions: config.listen.maxSessions,
       maxBodyBytes: config.listen.maxBodyBytes,
       validateRoutingHeaders: config.listen.validateRoutingHeaders,
