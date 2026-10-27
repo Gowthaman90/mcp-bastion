@@ -640,7 +640,7 @@ categories. `bastion__compliance` returns aggregate totals.
   secrets: cloud and provider keys, GitHub, Slack, Stripe, Google and npm tokens, JWTs, `Bearer`
   credentials, passwords in URLs, private-key blocks and `NAME=secret` assignments. The same patterns
   redact secrets from tool **results** before the agent sees them (`redactResponseSecrets`, on by
-  default). Measured on a 39-case corpus (`test/redaction-corpus.test.ts`): 27/27 secrets caught, 0/12
+  default). Measured on a 45-case corpus (`test/redaction-corpus.test.ts`): 29/29 secrets caught, 0/16
   benign look-alikes changed.
 - Never written to any sink: tool results, delegate-token values, forwarded header values (names only),
   and the raw user `sub` when `delegation.recordSubject` is `hash`. Arguments are recorded only as

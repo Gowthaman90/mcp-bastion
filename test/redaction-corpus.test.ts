@@ -103,6 +103,12 @@ const SECRETS: Array<[string, string, string]> = [
   ["env API_KEY", "API_KEY: 9d1f3c5e7a9b1d3f", "9d1f3c5e7a9b1d3f"],
   ["name starting with PASSWORD", "PASSWORD=hunter2!x", "hunter2!x"],
   ["name starting with TOKEN", "TOKEN: q8Zr2LmN5vXp", "q8Zr2LmN5vXp"],
+  [
+    "bare token, long random value",
+    "retrying with token=8f3kq2vlx9zp4mwn7rty1sbc",
+    "8f3kq2vlx9zp4mwn7rty1sbc",
+  ],
+  ["bare secret, mixed-case value", "secret: Xq7mR2pL9vWz", "Xq7mR2pL9vWz"],
   ["client secret", "client_secret=Zk3Q~abcDEF.ghiJKL-mnoPQR_stu", "Zk3Q~abcDEF.ghiJKL-mnoPQR_stu"],
   [
     "URL query token",
@@ -144,6 +150,10 @@ const BENIGN: Array<[string, string]> = [
   ["skill name with dash", "the sk-learn tutorial"],
   ["base64 image prefix", "data:image/png;base64,iVBORw0KGgo"],
   ["email address", "contact ana.k@example.com"],
+  ["log line with a cache key", "2026-09-05T10:00:04Z INFO  cache invalidated key=users:*"],
+  ["bare cache key pattern", "key=users:*"],
+  ["token in prose", "token refresh took 1.9s"],
+  ["sort key column name", "sort key=created_at"],
 ];
 
 describe("redaction corpus", () => {

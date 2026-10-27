@@ -40,13 +40,34 @@ const SECRET_PARTS: RegExp[] = [
 
 /**
  * `NAME=secret` / `NAME: secret` where the name contains a credential word (anywhere, including at
- * the start) — redact the value only.
+ * the start) — redact the value only. A bare `key=` / `token=` / `secret=` also needs a secret-shaped
+ * value (see `BARE_CREDENTIAL_WORD`).
  */
 const ENV_ASSIGNMENT =
   /\b([A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|CREDENTIAL)[A-Za-z0-9_]*)(\s*[=:]\s*)(\S+)/gi;
 
 /** Values that are never secrets: booleans, null-ish words and short plain numbers (`max_tokens: 1500`). */
 const NOT_A_SECRET = /^(?:true|false|null|none|undefined|\d{1,7})[,;]?$/i;
+
+/**
+ * A name that is only a generic credential word. `key`, `token` and `secret` are also everyday data
+ * words (`cache invalidated key=users:*`, `sort key=created_at`), so for these bare names the value
+ * must also look like a secret. `password` / `passwd` / `pwd` are not on this list: bare, they still
+ * almost always carry a password, so they stay always-redacted, as do prefixed names (`API_KEY=`).
+ */
+const BARE_CREDENTIAL_WORD = /^(?:key|token|secret|credential)s?$/i;
+
+/**
+ * Secret-shaped: 8+ token characters (no `:`, `*`, `/` or other structure) with at least one letter
+ * and one digit, and either mixed case or 16+ characters. Trailing `,`/`;` and base64 `=` padding are
+ * allowed.
+ */
+function looksSecretShaped(value: string): boolean {
+  const v = value.replace(/[,;]$/, "");
+  if (!/^[A-Za-z0-9._~+-]{8,}={0,2}$/.test(v)) return false;
+  if (!/[0-9]/.test(v) || !/[A-Za-z]/.test(v)) return false;
+  return (/[a-z]/.test(v) && /[A-Z]/.test(v)) || v.length >= 16;
+}
 
 /**
  * Redact credential-shaped secret values in `text`. Returns the scrubbed text and how many secrets
@@ -71,6 +92,7 @@ export function redactSecrets(text: string): { text: string; redactions: number 
   }
   out = out.replace(ENV_ASSIGNMENT, (m, name: string, sep: string, value: string) => {
     if (value === REDACTED || value.startsWith(REDACTED) || NOT_A_SECRET.test(value)) return m;
+    if (BARE_CREDENTIAL_WORD.test(name) && !looksSecretShaped(value)) return m;
     redactions++;
     return `${name}${sep}${REDACTED}`;
   });
