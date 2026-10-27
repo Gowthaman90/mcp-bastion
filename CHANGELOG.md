@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-27
+
 Runtime authorization: who may call which tool, with which arguments, decided before any upstream
 contact. Inactive unless `authorization.enabled`; nothing changes for existing configs. All audit
 changes are additive; `AUDIT_SCHEMA_VERSION` stays `1`.
@@ -53,8 +55,12 @@ changes are additive; `AUDIT_SCHEMA_VERSION` stays `1`.
   the call (`delegation:unverified`) instead of silently dropping its identities.
 - **Enforcement.** New `security.onAuthorization`: `warn` under `observe` (the call goes through and the
   audit event gets `wouldBlock: "blocked_authorization"`), `block` under `balanced` and `strict`. A
-  refusal is answered `Blocked by mcp-bastion: this caller is not authorized to call "<tool>" (rule <id>).`
-  (or `(no matching grant)`); no other policy content is revealed.
+  refusal is answered `Blocked by mcp-bastion: this caller is not authorized to call "<tool>" (<reason>).`,
+  where the reason is `rule <id>` for a deny rule, `no matching grant`, or the argument names a matching
+  grant did not allow, for example `argument "env" not allowed by grant release-staging` or
+  `argument "ref" missing, required by grant g2`. When identities fail differently each is prefixed
+  (`client: …; agent: …`), and an untrusted delegate token adds `delegate token not trusted`. Rule ids and argument names only: never
+  constraint values, user subjects or tokens.
 - **Audit.** New decision `blocked_authorization`, mapped to NIST AI RMF MANAGE and OWASP LLM06
   (Excessive Agency). New optional event field `authorization`: `{ effect, rule, byDefault, client,
 identities, violations }`, with violations such as `"agent:argument"` or `"client:denied"`. Rule ids
@@ -71,6 +77,12 @@ identities, violations }`, with violations such as `"agent:argument"` or `"clien
 - Tests: the 12 pre-registered `authorization` dev fixtures of mcp-defense-bench (tag
   `authorization-prereg-2026-10-26`) are replayed through a real gateway; each attack is refused before
   upstream contact with exactly the pre-registered violation, and each benign control is allowed.
+- **Benchmark.** On mcp-defense-bench's pre-registered authorization family (rubric 0.10.0), measured
+  blind and run once on the held-out set: 12/12 refused before upstream contact on development and
+  held-out, 0 false positives on the benign controls. agentgateway v1.6.0 and ToolHive v0.57.0 also scored
+  12/12; the family separates per-caller, argument-aware policy engines from tools without one, and does
+  not rank them. Two fixes were made after that measurement (bare-word redaction above, refusal wording)
+  and logged as post-freeze changes in the benchmark.
 
 ### Audit evidence and sinks
 
@@ -112,8 +124,11 @@ when `audit.checkpoint` is configured; `AUDIT_SCHEMA_VERSION` stays `1`.
   cut is detected only back to the last checkpoint that reached a witness the attacker cannot rewrite.
 - **Redaction.** Inline DLP now also catches GitHub fine-grained tokens, Stripe and Google API keys, npm
   tokens, Slack webhook URLs, JWTs, `Bearer` credentials and passwords in URLs. On the new 39-case corpus
-  (`test/redaction-corpus.test.ts`) it went from 16/27 secrets caught and 2/12 benign values over-redacted
-  to 27/27 and 0/12. **Fixed:** a `NAME=secret` whose name starts with the credential word (`PASSWORD=…`,
+  (`test/redaction-corpus.test.ts`, 45 cases) it went from 16/27 secrets caught and 2/12 benign values
+  over-redacted to 29/29 and 0/16. A bare `key=` / `token=` / `secret=` / `credential=` is redacted only when
+  its value looks like a secret (8+ token characters with a letter and a digit, and mixed case or 16+
+  characters), because these words are also everyday data words (`cache invalidated key=users:*`, sort
+  keys, pagination tokens); prefixed names (`API_KEY=`) and bare `password=` / `pwd=` stay always-redacted. **Fixed:** a `NAME=secret` whose name starts with the credential word (`PASSWORD=…`,
   `TOKEN: …`) was missed; booleans, null-ish words and short numbers (`max_tokens: 1500`) are no longer
   redacted. **Changed:** JWTs and bearer credentials in tool results are now redacted by default; set
   `security.redactResponseSecrets: false` if a tool must return one to the agent.
