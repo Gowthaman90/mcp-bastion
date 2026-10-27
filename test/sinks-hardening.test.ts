@@ -199,6 +199,19 @@ describe("audit.onSinkFailure", () => {
     expect(ok.isError).toBeFalsy();
   });
 
+  it("block: never refuses Bastion's own control tools, so the sinks can be inspected", async () => {
+    const engine = new AuditEngine(
+      AuditConfigSchema.parse({ enabled: true, onSinkFailure: "block" }),
+      [new FakeSink(false)],
+    );
+    const next = vi.fn().mockResolvedValue({ content: [] });
+    await engine.buildInterceptor()(
+      { ...ctx(), server: "bastion", toolName: "status", namespacedName: "bastion__status" },
+      next,
+    );
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
   it("block: keeps serving while at least one sink is up", async () => {
     const engine = new AuditEngine(
       AuditConfigSchema.parse({ enabled: true, onSinkFailure: "block" }),

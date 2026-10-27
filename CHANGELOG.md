@@ -82,7 +82,8 @@ when `audit.checkpoint` is configured; `AUDIT_SCHEMA_VERSION` stays `1`.
   `failedAttempts`, `lastError`, for every sink including the file sink.
 - **`audit.onSinkFailure`**: `continue` (default) or `block`. With `block`, calls are refused
   (`blocked_audit_unavailable`) while no sink can deliver, for deployments where an unaudited call is not
-  acceptable.
+  acceptable. Bastion's own control tools (`bastion__status`, `bastion__reconnect`, …) are never refused, so
+  the sinks can still be inspected and recovered.
 - **Per-sink `includeArgs`**, overriding `audit.includeArgs` per sink (e.g. full arguments to a local
   file, none to a shared SIEM). When sinks differ and `tamperEvident` is on, events use **chain v2**
   (`chainVersion: 2`): the hash covers the event without its `args` view plus `argsDigest` (HMAC-SHA256 of

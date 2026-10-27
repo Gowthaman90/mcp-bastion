@@ -93,7 +93,13 @@ export class AuditEngine {
     return async (ctx, next) => {
       const traceId = randomUUID();
       const start = Date.now();
-      if (this.config.onSinkFailure === "block" && this.allSinksDown()) {
+      // Bastion's own control tools (server `bastion`, reserved while they are audited) stay usable, so
+      // an operator can still inspect and recover the sinks while calls are refused.
+      if (
+        this.config.onSinkFailure === "block" &&
+        ctx.server !== "bastion" &&
+        this.allSinksDown()
+      ) {
         ctx.securityDecision = "blocked_audit_unavailable";
         logger.error(
           { tool: ctx.namespacedName },
