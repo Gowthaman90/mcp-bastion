@@ -1,7 +1,7 @@
 /**
  * Gateway mode: per-request identity forwarding (`forwardHeaders`), on-demand connection
  * (`connect: "onDemand"`) and `authHeaders`. The upstream fixture authenticates every request by
- * `x-cso-identity` and echoes it back, like the CS Spire sub-agents.
+ * `x-cso-identity` and echoes it back, like a typical stateless sub-agent server.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";

@@ -794,7 +794,7 @@ export const ListenConfigSchema = z
     legacy: z.enum(["stateless", "reject"]).default("stateless"),
     /**
      * Named HTTP clients, each with its own bearer token read from an environment variable at
-     * startup: `{ "cs-spire": { "tokenEnv": "BASTION_TOKEN_CS_SPIRE" } }`. A request presenting a
+     * startup: `{ "ops": { "tokenEnv": "BASTION_TOKEN_OPS" } }`. A request presenting a
      * client's token acts as `client:<name>`, which `authorization` rules can name. May be combined
      * with `authToken` (that token is the client `default`).
      */

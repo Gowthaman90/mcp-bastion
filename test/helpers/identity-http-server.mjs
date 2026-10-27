@@ -1,5 +1,5 @@
 // A stateless Streamable HTTP MCP upstream that authenticates every request by an identity header,
-// shaped like the CS Spire sub-agents: one JSON-RPC POST in, one JSON answer out, GET answers 405,
+// shaped like a typical stateless sub-agent server: one JSON-RPC POST in, one JSON answer out, GET answers 405,
 // protocol 2025-06-18 / 2025-03-26.
 //
 // - A request without `x-cso-identity`, or with one starting "invalid", gets HTTP 401.
