@@ -132,6 +132,33 @@ describe("audit & compliance (v0.3, end-to-end via the manager)", () => {
     expect(flagged).not.toHaveProperty("wouldBlock"); // 'balanced' would not block a heuristic
   });
 
+  it("records a secret in a result without changing it when redaction is off (observe)", async () => {
+    const descPath = tmpFile("desc.txt", "echoes its input");
+    const auditPath = tmpFile("audit.jsonl");
+    mgr = new UpstreamManager(
+      cfg(descPath, auditPath, {
+        enforcementProfile: "observe",
+        validateArguments: false,
+        redactResponseSecrets: false,
+      }),
+    );
+    await mgr.connectAll();
+
+    const echo = "Debug creds: AKIAIOSFODNN7EXAMPLE";
+    const res = await mgr.callUpstreamTool("mut__op", { echo });
+    expect(JSON.stringify(res)).toContain("AKIAIOSFODNN7EXAMPLE"); // result untouched
+
+    await mgr.closeAll();
+    const [event] = readEvents(auditPath);
+    expect(event).not.toHaveProperty("redactedSecrets");
+    expect(event.findings).toContainEqual({
+      rule: "secret-in-result",
+      severity: "high",
+      kind: "heuristic",
+    });
+    expect(event.responseFindings?.map((f) => f.rule)).toContain("secret-in-result");
+  });
+
   it("does nothing when audit is disabled (empty compliance report)", async () => {
     const descPath = tmpFile("desc.txt", "safe");
     mgr = new UpstreamManager(
