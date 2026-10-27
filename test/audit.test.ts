@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -184,5 +184,47 @@ describe("FileSink", () => {
     expect(lines).toHaveLength(2);
     expect(JSON.parse(lines[0]).tool).toBe("t");
     expect(JSON.parse(lines[1]).seq).toBe(2);
+  });
+
+  it("refuses an unwritable path at construction with a clear error (no async crash)", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "bastion-audit-")), "missing-dir", "audit.jsonl");
+    expect(() => new FileSink(path)).toThrow(/audit file sink cannot open/);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "creates a new audit file readable by its owner only",
+    async () => {
+      const path = join(mkdtempSync(join(tmpdir(), "bastion-audit-")), "audit.jsonl");
+      const sink = new FileSink(path);
+      await sink.close();
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it("survives a write error at runtime: counts dropped events, flush/close settle", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "bastion-audit-")), "audit.jsonl");
+    const sink = new FileSink(path);
+    const event = { schemaVersion: 1, seq: 1, tool: "t" } as AuditEvent;
+    sink.write(event);
+
+    // Simulate the disk filling up under the open stream.
+    const stream = (
+      sink as unknown as { stream: NodeJS.WritableStream & { destroy(err: Error): void } }
+    ).stream;
+    const closed = new Promise((resolve) => stream.once("close", resolve));
+    stream.destroy(new Error("ENOSPC: no space left on device"));
+    await closed;
+
+    expect(sink.lastError).toMatch(/ENOSPC/);
+    expect(() => sink.write({ ...event, seq: 2 })).not.toThrow();
+    expect(sink.dropped).toBe(1);
+
+    const settle = (p: Promise<void>) =>
+      Promise.race([
+        p.then(() => "settled"),
+        new Promise((resolve) => setTimeout(() => resolve("hung"), 1_000)),
+      ]);
+    expect(await settle(sink.flush())).toBe("settled");
+    expect(await settle(sink.close())).toBe("settled");
   });
 });
