@@ -97,7 +97,8 @@ export type SecurityDecision =
   | "blocked_input_required"
   | "blocked_request_state"
   | "blocked_delegation"
-  | "blocked_authorization";
+  | "blocked_authorization"
+  | "blocked_audit_unavailable";
 
 /** Context passed through the interceptor pipeline for a single tool call. */
 export interface ToolCallContext {

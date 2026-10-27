@@ -55,6 +55,7 @@ export class UpstreamManager {
   private readonly namespaceSeparator: string;
   private readonly security: SecurityEngine;
   private readonly audit?: AuditEngine;
+  private readonly auditOnSinkFailure: "continue" | "block";
   private readonly interceptors: readonly Interceptor[];
   private toolsChangedListener: () => void = () => {};
   /** Per-server manual-reconnect timestamps — bounds agent-driven subprocess thrash (M5). */
@@ -72,6 +73,7 @@ export class UpstreamManager {
    */
   constructor(config: BastionConfig) {
     this.namespaceSeparator = config.namespace.separator;
+    this.auditOnSinkFailure = config.audit.onSinkFailure;
     const configuredKey =
       config.security.requestStateKey ?? process.env.MCP_BASTION_REQUEST_STATE_KEY;
     this.requestStateKey = configuredKey
@@ -561,6 +563,13 @@ export class UpstreamManager {
   /** Authorization policy summary for `bastion__status`, or `undefined` when disabled. */
   authorizationStatus(): ReturnType<AuthorizationGate["status"]> {
     return this.authorization.status();
+  }
+
+  /** Audit sink health for `bastion__status`, or `undefined` when audit is off. */
+  auditStatus():
+    { sinks: ReturnType<AuditEngine["sinkHealth"]>; onSinkFailure: string } | undefined {
+    if (!this.audit) return undefined;
+    return { sinks: this.audit.sinkHealth(), onSinkFailure: this.auditOnSinkFailure };
   }
 
   /** Snapshot the health of every upstream (backs `bastion__status`). */

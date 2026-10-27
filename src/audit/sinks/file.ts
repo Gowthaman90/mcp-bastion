@@ -17,7 +17,7 @@
 import { closeSync, createWriteStream, openSync, type WriteStream } from "node:fs";
 
 import { logger } from "../../observability/index.js";
-import type { AuditEvent, AuditSink } from "../types.js";
+import type { AuditRecord, AuditSink, SinkHealth } from "../types.js";
 
 /** Owner read/write only: audit records can carry sensitive metadata. */
 const FILE_MODE = 0o600;
@@ -27,6 +27,7 @@ export class FileSink implements AuditSink {
   private readonly stream: WriteStream;
   private failure: string | undefined;
   private droppedCount = 0;
+  private written = 0;
 
   /**
    * @param path File to append to. Its directory must exist and be writable.
@@ -65,12 +66,25 @@ export class FileSink implements AuditSink {
     return this.droppedCount;
   }
 
-  write(event: AuditEvent): void {
+  write(event: AuditRecord): void {
     if (this.failure !== undefined || this.stream.destroyed) {
       this.droppedCount++;
       return;
     }
     this.stream.write(`${JSON.stringify(event)}\n`);
+    this.written++;
+  }
+
+  health(): SinkHealth {
+    return {
+      name: this.name,
+      healthy: this.failure === undefined && !this.stream.destroyed,
+      delivered: this.written,
+      dropped: this.droppedCount,
+      queued: 0,
+      failedAttempts: this.failure === undefined ? 0 : 1,
+      ...(this.failure !== undefined ? { lastError: this.failure } : {}),
+    };
   }
 
   async flush(): Promise<void> {

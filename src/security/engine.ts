@@ -476,6 +476,17 @@ export class SecurityEngine {
             "inline DLP: redacted secret value(s) from tool result",
           );
         }
+      } else {
+        // Redaction off (e.g. a shadow-mode pilot that must not alter results): still scan, and
+        // record what redaction would have removed, leaving the result untouched.
+        const { redactions } = this.redactResultSecrets(complete);
+        if (redactions > 0) {
+          findings.push({
+            rule: "secret-in-result",
+            severity: "high",
+            excerpt: `${redactions} secret value(s) in the tool result, not redacted (redactResponseSecrets is off)`,
+          });
+        }
       }
 
       if (findings.length === 0) return complete;
