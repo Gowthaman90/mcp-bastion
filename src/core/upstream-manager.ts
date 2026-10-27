@@ -438,7 +438,8 @@ export class UpstreamManager {
 
   /**
    * Apply an authorization verdict before any upstream contact. A refusal under `block` is audited
-   * (`blocked_authorization`) and answered with a tool error naming at most the deny rule's id; a
+   * (`blocked_authorization`) and answered with a tool error naming what failed (the deny rule's id,
+   * a missing grant, or the argument names a matching grant did not allow; never constraint values); a
    * refusal under `warn` is logged and the call goes ahead (the pipeline records `wouldBlock`).
    */
   private authorizationPreflight(
@@ -479,7 +480,7 @@ export class UpstreamManager {
     });
     return textResult(
       `Blocked by mcp-bastion: this caller is not authorized to call "${name}" ` +
-        `(${rule !== null ? `rule ${rule}` : "no matching grant"}).`,
+        `(${check.explanation ?? (rule !== null ? `rule ${rule}` : "no matching grant")}).`,
       true,
     );
   }

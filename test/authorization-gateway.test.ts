@@ -168,7 +168,8 @@ describe("named clients over HTTP (listen.clients)", () => {
     });
     expect(traversal.isError).toBe(true);
     expect(textOf(traversal)).toBe(
-      'Blocked by mcp-bastion: this caller is not authorized to call "files__read_file" (no matching grant).',
+      'Blocked by mcp-bastion: this caller is not authorized to call "files__read_file" ' +
+        '(argument "path" not allowed by grant intern-reads).',
     );
     expect(
       textOf(

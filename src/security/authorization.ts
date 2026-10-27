@@ -303,6 +303,49 @@ function applicableRules(
   );
 }
 
+/** Which arguments kept one matching allow rule (grant) from applying. */
+export interface ArgumentShortfall {
+  /** The grant's rule id. */
+  rule: string;
+  /** Constrained arguments the call did not carry. */
+  missing: string[];
+  /** Constrained arguments the call carried that the constraint rejected or could not compare. */
+  rejected: string[];
+}
+
+/**
+ * For an identity refused with reason `argument`: each allow rule that matched the tool and the
+ * arguments it fell short on, in policy order. Explanation only; it decides nothing.
+ */
+export function argumentShortfalls(
+  policy: AuthorizationPolicy,
+  kind: IdentityKind,
+  id: string,
+  tool: string,
+  args: unknown,
+): ArgumentShortfall[] {
+  const record =
+    args !== null && typeof args === "object" && !Array.isArray(args)
+      ? (args as Record<string, unknown>)
+      : {};
+  const out: ArgumentShortfall[] = [];
+  for (const rule of applicableRules(policy, kind, id, tool)) {
+    if (rule.effect !== "allow" || !rule.args) continue;
+    const missing: string[] = [];
+    const rejected: string[] = [];
+    for (const [name, constraint] of Object.entries(rule.args)) {
+      const present =
+        Object.prototype.hasOwnProperty.call(record, name) && record[name] !== undefined;
+      if (evaluateConstraint(constraint, present, present ? record[name] : undefined) === "holds") {
+        continue;
+      }
+      (present ? rejected : missing).push(name);
+    }
+    if (missing.length > 0 || rejected.length > 0) out.push({ rule: rule.id, missing, rejected });
+  }
+  return out;
+}
+
 /** The verdict for one identity. */
 function judgeIdentity(
   policy: AuthorizationPolicy,

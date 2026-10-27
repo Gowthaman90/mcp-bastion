@@ -20,10 +20,12 @@ import type { AuditAuthorizationRecord } from "../audit/types.js";
 import type { BastionConfig } from "../config/index.js";
 import { ENFORCEMENT_PROFILES } from "../config/schema.js";
 import {
+  argumentShortfalls,
   authorize,
   mayList,
   patternReachesPrefix,
   principalMatches,
+  type ArgumentShortfall,
   type AuthorizationDecision,
   type AuthorizationPolicy,
   type CallIdentities,
@@ -42,6 +44,12 @@ export interface AuthorizationCheck {
   /** A denial the `warn` action let through that the `balanced` profile would have blocked. */
   wouldBlock: boolean;
   record: AuditAuthorizationRecord;
+  /**
+   * On a denial, what failed, for the refusal message: `rule <id>` for a deny rule, `no matching
+   * grant`, or which arguments a matching grant did not allow. Names rule ids and argument names,
+   * never constraint values.
+   */
+  explanation?: string;
 }
 
 /** `bastion__status` summary of the policy. Rule ids and times only. */
@@ -115,6 +123,9 @@ export class AuthorizationGate {
     const denied = !decision.allowed;
     return {
       decision,
+      ...(denied
+        ? { explanation: this.explain(decision, resolved.identities, tool, args, !resolved.ok) }
+        : {}),
       blocks: denied && this.action === "block",
       wouldBlock:
         denied &&
@@ -171,6 +182,35 @@ export class AuthorizationGate {
     };
   }
 
+  /** Describe a denial: the deny rule, a missing grant, or the arguments a grant did not allow. */
+  private explain(
+    decision: AuthorizationDecision,
+    identities: CallIdentities,
+    tool: string,
+    args: unknown,
+    untrusted: boolean,
+  ): string {
+    if (decision.rule !== null) return `rule ${decision.rule}`;
+    const parts: Array<{ kind: string; text: string }> = [];
+    for (const v of decision.identities) {
+      if (v.permitted) continue;
+      const text =
+        v.reason === "argument"
+          ? describeShortfalls(
+              argumentShortfalls(this.policy, v.kind, identities[v.kind] ?? "", tool, args),
+            )
+          : "no matching grant";
+      parts.push({ kind: v.kind, text });
+    }
+    if (decision.identities.length === 0) parts.push({ kind: "none", text: "no matching grant" });
+    const same = parts.every((p) => p.text === parts[0]?.text);
+    const texts = same
+      ? parts.slice(0, 1).map((p) => p.text)
+      : parts.map((p) => `${p.kind}: ${p.text}`);
+    if (untrusted) texts.push("delegate token not trusted");
+    return texts.join("; ");
+  }
+
   /** The authenticated identities of a call to `server` by `client` in the current request. */
   private identities(server: string, client: string): ResolvedIdentities {
     const identities: CallIdentities = { client };
@@ -192,4 +232,20 @@ export class AuthorizationGate {
     if (token.actors.length > 0) identities.agent = token.actors[0];
     return { ok: verified && findings.length === 0, identities };
   }
+}
+
+/** `argument "env" not allowed by grant g1`, `argument "ref" missing, required by grant g2`, ... */
+function describeShortfalls(shortfalls: ArgumentShortfall[]): string {
+  const quote = (names: string[]) => names.map((n) => `"${n}"`).join(", ");
+  const noun = (names: string[]) => (names.length === 1 ? "argument" : "arguments");
+  const out: string[] = [];
+  for (const s of shortfalls) {
+    if (s.rejected.length > 0) {
+      out.push(`${noun(s.rejected)} ${quote(s.rejected)} not allowed by grant ${s.rule}`);
+    }
+    if (s.missing.length > 0) {
+      out.push(`${noun(s.missing)} ${quote(s.missing)} missing, required by grant ${s.rule}`);
+    }
+  }
+  return out.length > 0 ? out.join(", ") : "arguments not allowed by any matching grant";
 }
