@@ -7,6 +7,7 @@
  */
 import { z } from "zod";
 
+import { isValidToolPattern, patternReachesPrefix } from "../security/authorization.js";
 import { checkTransportSecurity } from "../security/transport.js";
 
 /** A local upstream launched as a subprocess and reached over stdio. */
@@ -404,6 +405,7 @@ export const ENFORCEMENT_PROFILES = {
     onDataFlow: "warn",
     onDelegation: "warn",
     onDelegationChain: "warn",
+    onAuthorization: "warn",
   },
   balanced: {
     onInputRequired: "block",
@@ -415,6 +417,7 @@ export const ENFORCEMENT_PROFILES = {
     onDataFlow: "block",
     onDelegation: "block",
     onDelegationChain: "warn",
+    onAuthorization: "block",
   },
   strict: {
     onInputRequired: "block",
@@ -426,6 +429,7 @@ export const ENFORCEMENT_PROFILES = {
     onDataFlow: "block",
     onDelegation: "block",
     onDelegationChain: "block",
+    onAuthorization: "block",
   },
 } as const;
 
@@ -558,6 +562,11 @@ export const SecurityConfigSchema = z
      * informational (RFC 8693 §4.1), so this defaults to `warn` except under `strict`.
      */
     onDelegationChain: OnAction.optional(),
+    /**
+     * What to do when the `authorization` policy refuses a call. Deterministic, so it defaults to
+     * `block` under `balanced` and `strict`; `observe` warns and records `wouldBlock`.
+     */
+    onAuthorization: OnAction.optional(),
   })
   .transform((cfg) => {
     const p = ENFORCEMENT_PROFILES[cfg.enforcementProfile];
@@ -572,6 +581,7 @@ export const SecurityConfigSchema = z
       onInputRequired: cfg.onInputRequired ?? p.onInputRequired,
       onDelegation: cfg.onDelegation ?? p.onDelegation,
       onDelegationChain: cfg.onDelegationChain ?? p.onDelegationChain,
+      onAuthorization: cfg.onAuthorization ?? p.onAuthorization,
     };
   })
   .prefault({});
@@ -624,6 +634,34 @@ export const AuditConfigSchema = z
   .prefault({});
 export type AuditConfig = z.infer<typeof AuditConfigSchema>;
 
+/**
+ * Client names Bastion assigns itself: `default` (the `listen.authToken` bearer), `stdio` (a local
+ * stdio client) and `anonymous` (an unauthenticated loopback HTTP request).
+ */
+export const RESERVED_CLIENT_NAMES: ReadonlySet<string> = new Set([
+  "default",
+  "stdio",
+  "anonymous",
+]);
+
+/** A named HTTP client (`listen.clients` key). */
+const ClientNameSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, {
+    message: "client names use letters, digits, '.', '_' and '-' (starting with a letter or digit)",
+  })
+  .refine((name) => !RESERVED_CLIENT_NAMES.has(name), {
+    message: 'client names "default", "stdio" and "anonymous" are reserved',
+  });
+
+/** One named HTTP client. The token itself never appears in the config file. */
+const ListenClientSchema = z.strictObject({
+  /** Environment variable holding this client's bearer token (read once at startup). */
+  tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, {
+    message: "tokenEnv must be an environment variable name",
+  }),
+});
+
 /** How Bastion exposes itself to clients: as a stdio subprocess or an HTTP server. */
 export const ListenConfigSchema = z
   .object({
@@ -658,6 +696,13 @@ export const ListenConfigSchema = z
      * outright (`-32022`), which is the downgrade-prevention posture.
      */
     legacy: z.enum(["stateless", "reject"]).default("stateless"),
+    /**
+     * Named HTTP clients, each with its own bearer token read from an environment variable at
+     * startup: `{ "cs-spire": { "tokenEnv": "BASTION_TOKEN_CS_SPIRE" } }`. A request presenting a
+     * client's token acts as `client:<name>`, which `authorization` rules can name. May be combined
+     * with `authToken` (that token is the client `default`).
+     */
+    clients: z.record(ClientNameSchema, ListenClientSchema).optional(),
   })
   .prefault({});
 export type ListenConfig = z.infer<typeof ListenConfigSchema>;
@@ -686,6 +731,124 @@ export const DelegationConfigSchema = z
   .prefault({});
 export type DelegationConfig = z.infer<typeof DelegationConfigSchema>;
 
+/** A JSON scalar an `equals` / `in` constraint compares against. */
+const AuthorizationScalarSchema = z.union([z.string(), z.number(), z.boolean()]);
+
+/** Constraints on one top-level argument (all listed constraints must hold). */
+const ArgumentConstraintSchema = z
+  .strictObject({
+    /** Exactly equal (no case folding, no Unicode normalisation, no type coercion). */
+    equals: AuthorizationScalarSchema.optional(),
+    /** Exactly equal to one of these. */
+    in: z.array(AuthorizationScalarSchema).nonempty().optional(),
+    /** A JSON number no greater than this (a numeric string fails). */
+    max: z.number().optional(),
+    /** A JSON number no smaller than this (a numeric string fails). */
+    min: z.number().optional(),
+    /**
+     * An absolute POSIX path that, after resolving `.` and `..`, is this base or lies below it at a
+     * `/` boundary.
+     */
+    pathWithin: z.string().optional(),
+  })
+  .superRefine((c, ctx) => {
+    if (Object.values(c).every((v) => v === undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "an argument constraint needs at least one of equals, in, max, min, pathWithin",
+      });
+    }
+    if (c.min !== undefined && c.max !== undefined && c.min > c.max) {
+      ctx.addIssue({ code: "custom", path: ["min"], message: "min is greater than max" });
+    }
+    if (
+      c.pathWithin !== undefined &&
+      (!c.pathWithin.startsWith("/") || c.pathWithin.includes("\0"))
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["pathWithin"],
+        message: "pathWithin must be an absolute POSIX path without NUL",
+      });
+    }
+  });
+
+/** One identity name, or several (any of them). */
+const PrincipalNamesSchema = z.union([z.string().min(1), z.array(z.string().min(1)).nonempty()]);
+
+/**
+ * Who a rule applies to: `"*"` (every identity) or exactly one identity kind: `client` (a
+ * `listen.clients` name, or `default` / `stdio` / `anonymous`), `user` (a trusted delegate token's
+ * `sub`) or `agent` (that token's current actor, `act.sub` else `act.client_id`).
+ */
+const RulePrincipalSchema = z.union([
+  z.literal("*"),
+  z
+    .strictObject({
+      client: PrincipalNamesSchema.optional(),
+      user: PrincipalNamesSchema.optional(),
+      agent: PrincipalNamesSchema.optional(),
+    })
+    .refine((p) => Object.values(p).filter((v) => v !== undefined).length === 1, {
+      message: 'a principal names exactly one of client, user, agent (or is "*")',
+    }),
+]);
+
+/** One authorization rule. */
+const AuthorizationRuleSchema = z.strictObject({
+  /** Stable id for audit events and refusal messages. Defaults to `rule-<n>` (1-based). */
+  id: z.string().min(1).optional(),
+  effect: z.enum(["allow", "deny"]),
+  principal: RulePrincipalSchema,
+  /** Namespaced tool names: exact, or one trailing `*` as a prefix match (`"ci__*"`, `"*"`). */
+  tools: z
+    .array(
+      z.string().refine(isValidToolPattern, {
+        message: 'tool patterns are exact names or end in a single "*" (no other wildcard)',
+      }),
+    )
+    .nonempty(),
+  /** Constraints on top-level arguments; all must hold for the rule to match. */
+  args: z.record(z.string().min(1), ArgumentConstraintSchema).optional(),
+});
+
+/**
+ * Runtime authorization (inactive unless `enabled`). Every authenticated identity a call carries
+ * (client, user, agent) must be permitted; a matching deny overrides any allow.
+ */
+export const AuthorizationConfigSchema = z
+  .strictObject({
+    enabled: z.boolean().default(false),
+    /** For an identity with no allow rule for the tool: `deny` (default) or `allow`. */
+    default: z.enum(["deny", "allow"]).default("deny"),
+    /**
+     * Let `user` / `agent` rules use claims from upstreams in structural delegation mode, whose
+     * signatures Bastion does not verify. Safe only when the upstream verifies the same token.
+     */
+    trustStructuralClaims: z.boolean().default(false),
+    rules: z.array(AuthorizationRuleSchema).default([]),
+  })
+  .superRefine((cfg, ctx) => {
+    const seen = new Set<string>();
+    cfg.rules.forEach((rule, i) => {
+      const id = rule.id ?? `rule-${i + 1}`;
+      if (seen.has(id)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["rules", i, "id"],
+          message: `duplicate rule id "${id}"`,
+        });
+      }
+      seen.add(id);
+    });
+  })
+  .transform((cfg) => ({
+    ...cfg,
+    rules: cfg.rules.map((rule, i) => ({ ...rule, id: rule.id ?? `rule-${i + 1}` })),
+  }))
+  .prefault({});
+export type AuthorizationConfig = z.infer<typeof AuthorizationConfigSchema>;
+
 /** The complete, validated Bastion configuration. */
 export const BastionConfigSchema = z
   .object({
@@ -698,6 +861,7 @@ export const BastionConfigSchema = z
     audit: AuditConfigSchema,
     listen: ListenConfigSchema,
     delegation: DelegationConfigSchema,
+    authorization: AuthorizationConfigSchema,
   })
   .superRefine((cfg, ctx) => {
     for (const [name, server] of Object.entries(cfg.servers)) {
@@ -712,11 +876,11 @@ export const BastionConfigSchema = z
       }
       // The front-door bearer is Bastion's own credential, not the caller's; never pass it on.
       const incoming = Object.values(server.forwardHeaders).map((h) => h.toLowerCase());
-      if (cfg.listen.authToken && incoming.includes("authorization")) {
+      if ((cfg.listen.authToken || cfg.listen.clients) && incoming.includes("authorization")) {
         ctx.addIssue({
           code: "custom",
           path: ["servers", name, "forwardHeaders"],
-          message: `cannot forward the incoming "authorization" header while listen.authToken is set: it carries Bastion's own bearer token`,
+          message: `cannot forward the incoming "authorization" header while listen.authToken or listen.clients is set: it carries Bastion's own bearer token`,
         });
       }
     }
@@ -744,5 +908,68 @@ export const BastionConfigSchema = z
         });
       }
     }
+    checkAuthorizationReferences(cfg, ctx);
   });
 export type BastionConfig = z.infer<typeof BastionConfigSchema>;
+
+/**
+ * Cross-section checks on `authorization`: every `client` a rule names exists, and no `user` /
+ * `agent` rule can act on an upstream whose delegation claims are unverified (structural mode)
+ * unless `trustStructuralClaims` says so.
+ */
+function checkAuthorizationReferences(
+  cfg: {
+    servers: Record<string, ServerConfig>;
+    namespace: NamespaceConfig;
+    listen: ListenConfig;
+    authorization: AuthorizationConfig;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  const authz = cfg.authorization;
+  if (authz.enabled && "bastion" in cfg.servers) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["servers", "bastion"],
+      message:
+        'the server name "bastion" is reserved while authorization is enabled: control tools are authorized under it',
+    });
+  }
+  const clients = new Set<string>([
+    "stdio",
+    "anonymous",
+    ...(cfg.listen.authToken ? ["default"] : []),
+    ...Object.keys(cfg.listen.clients ?? {}),
+  ]);
+  const structural = Object.entries(cfg.servers)
+    .filter(([, s]) => s.transport === "http" && s.delegation?.verify === "structural")
+    .map(([name]) => name);
+  authz.rules.forEach((rule, i) => {
+    if (rule.principal === "*") return;
+    const named = rule.principal.client;
+    for (const client of named === undefined ? [] : typeof named === "string" ? [named] : named) {
+      if (!clients.has(client)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["authorization", "rules", i, "principal", "client"],
+          message: `unknown client "${client}": define it in listen.clients (or use default, stdio, anonymous)`,
+        });
+      }
+    }
+    if (authz.trustStructuralClaims) return;
+    if (rule.principal.user === undefined && rule.principal.agent === undefined) return;
+    for (const server of structural) {
+      const prefix = server + cfg.namespace.separator;
+      if (!rule.tools.some((p) => patternReachesPrefix(p, prefix))) continue;
+      ctx.addIssue({
+        code: "custom",
+        path: ["authorization", "rules", i, "principal"],
+        message:
+          `rule "${rule.id}" names a user or agent and can match tools of "${server}", whose ` +
+          `delegation tokens are not signature-verified (verify: "structural"). Use verify: ` +
+          `"signature" there, or set authorization.trustStructuralClaims: true if "${server}" ` +
+          `verifies the same token itself.`,
+      });
+    }
+  });
+}

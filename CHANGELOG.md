@@ -6,6 +6,64 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+Runtime authorization: who may call which tool, with which arguments, decided before any upstream
+contact. Inactive unless `authorization.enabled`; nothing changes for existing configs. All audit
+changes are additive; `AUDIT_SCHEMA_VERSION` stays `1`.
+
+- **`authorization`** (new top-level config): `default` (`deny`, or `allow`), `rules` and
+  `trustStructuralClaims`. A rule has an `id`, an `effect` (`allow` / `deny`), a `principal` (`"*"`, or
+  exactly one of `client`, `user`, `agent`, each a name or a list of names), `tools` (namespaced names,
+  exact or with one trailing `*`) and optional `args` constraints on top-level arguments: `equals`,
+  `in`, `max`, `min`, `pathWithin`.
+- **Semantics.** A call carries each authenticated identity it has: the `client`, plus the `user`
+  (`sub`) and `agent` (current actor) of the delegate token for the target upstream. Prior actors grant
+  nothing, and nothing in the arguments, headers, `_meta` or input responses is ever an identity. The
+  call is allowed only if **every** identity is permitted, so an agent acting for a user needs both
+  grants. Per identity, a matching deny wins (deny overrides allow); otherwise an allow whose argument
+  constraints all hold is needed. Matching is exact: no case folding, Unicode normalisation or type
+  coercion; `max`/`min` accept JSON numbers only; `pathWithin` resolves `.` and `..` (nothing is
+  percent-decoded) and checks the boundary at `/`; a missing constrained argument fails. A deny rule
+  with `args` applies only when its constraints hold. Under `default: "allow"`, an identity with no
+  allow rule for the tool is permitted, but one whose allow rules all fail their argument constraints is
+  still refused.
+- **Where it runs.** In `tools/call`, after the delegation checks and before any upstream contact, so a
+  refused call never opens an on-demand connection carrying the caller's forwarded headers. MRTR retries
+  are re-authorized. Control tools (`bastion__*`) are authorized under server name `bastion`, which is
+  then reserved. `tools/list` hides a tool when some identity could never be allowed it (whatever the
+  arguments), and does not connect an idle on-demand upstream none of whose tools the client could be
+  allowed.
+- **`listen.clients`**: named HTTP clients, each with its own bearer token read from an environment
+  variable (`{ "ops": { "tokenEnv": "BASTION_TOKEN_OPS" } }`). Tokens are compared by SHA-256 digest in
+  constant time across all clients; a missing or shared token stops startup. A named client's principal
+  is `client:<name>`. `listen.authToken` keeps working and is the client `default`; stdio is `stdio` and
+  an unauthenticated loopback request is `anonymous`. Named clients alone satisfy the non-loopback bind
+  guard.
+- **Trust in delegation claims.** `user` and `agent` come only from a trusted delegate token:
+  signature-verified, or in structural mode with `trustStructuralClaims: true`, and with no delegation
+  finding against it. A rule naming a `user` or `agent` that can match tools of a structural-mode upstream
+  is a config error unless `trustStructuralClaims` is set. A token that is present but untrusted refuses
+  the call (`delegation:unverified`) instead of silently dropping its identities.
+- **Enforcement.** New `security.onAuthorization`: `warn` under `observe` (the call goes through and the
+  audit event gets `wouldBlock: "blocked_authorization"`), `block` under `balanced` and `strict`. A
+  refusal is answered `Blocked by mcp-bastion: this caller is not authorized to call "<tool>" (rule <id>).`
+  (or `(no matching grant)`); no other policy content is revealed.
+- **Audit.** New decision `blocked_authorization`, mapped to NIST AI RMF MANAGE and OWASP LLM06
+  (Excessive Agency). New optional event field `authorization`: `{ effect, rule, byDefault, client,
+identities, violations }`, with violations such as `"agent:argument"` or `"client:denied"`. Rule ids
+  and identity kinds only: never a user `sub` or a token.
+- **`bastion__status`** gains an `authorization` summary when enabled: default, rule count, action,
+  `trustStructuralClaims`, and the last denial (rule id and time only).
+- **Finding kinds.** Audit `findings` / `responseFindings` and `bastion__security` findings carry
+  `kind: "heuristic" | "deterministic"` (`findingKind()` in `security/types.ts`). Pinning, identity,
+  schema, data-flow, custody, transport, header, delegation and authorization checks are
+  deterministic; poisoning, response, command-injection, DLP and steering checks are heuristic. A consumer
+  comparing whole finding objects will see the new field.
+- New exports: `authorize`, `mayList`, `matchesToolPattern`, `isPathWithin`, `resolvePosixPath`,
+  `findingKind`, `resolveListenClients` and their types.
+- Tests: the 12 pre-registered `authorization` dev fixtures of mcp-defense-bench (tag
+  `authorization-prereg-2026-10-26`) are replayed through a real gateway; each attack is refused before
+  upstream contact with exactly the pre-registered violation, and each benign control is allowed.
+
 ## [1.3.1] - 2026-10-26
 
 Fixes a crash in the audit file sink and picks up a `zod` security fix. Upgrading is recommended.

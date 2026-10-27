@@ -18,4 +18,6 @@ export type {
   AuditOutcome,
   FrameworkMapping,
   AuditDelegationRecord,
+  AuditAuthorizationRecord,
+  AuditFinding,
 } from "./types.js";

@@ -15,7 +15,12 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { loadConfig, defaultConfig } from "./config/index.js";
 import { BASTION_VERSION, UpstreamManager } from "./core/index.js";
 import { logger } from "./observability/index.js";
-import { broadcastToolsChanged, buildBastionServer, startHttpServer } from "./proxy/index.js";
+import {
+  broadcastToolsChanged,
+  buildBastionServer,
+  resolveListenClients,
+  startHttpServer,
+} from "./proxy/index.js";
 
 const program = new Command();
 
@@ -74,6 +79,7 @@ async function run(opts: { config?: string; http?: string }): Promise<void> {
       port: cliPort ?? config.listen.port,
       path: config.listen.path,
       authToken: config.listen.authToken,
+      clients: resolveListenClients(config.listen),
       maxSessions: config.listen.maxSessions,
       maxBodyBytes: config.listen.maxBodyBytes,
       validateRoutingHeaders: config.listen.validateRoutingHeaders,

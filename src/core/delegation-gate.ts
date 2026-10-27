@@ -25,6 +25,7 @@ import {
   type DelegationPolicy,
   type DelegationResult,
   type DelegationRule,
+  type DelegationTokenInfo,
   type DelegationUpstreamPolicy,
 } from "../security/delegation.js";
 import { currentRequestContext } from "./request-context.js";
@@ -224,6 +225,30 @@ export class DelegationGate {
         ),
       ...(carried || findings.length > 0 ? { record: this.record(verdict, server, findings) } : {}),
     };
+  }
+
+  /**
+   * The claims of the delegate token the current request carried for `server`, when it decoded.
+   * Internal: holds the raw `sub`, so it must never be logged or recorded as is.
+   */
+  tokenFor(server: string): DelegationTokenInfo | undefined {
+    if (!this.covers(server)) return undefined;
+    return this.verdict()?.result.tokens[server];
+  }
+
+  /**
+   * The findings that apply to `server` in the current request (its own token's plus the
+   * request-wide ones), without noting a violation. Empty when there is no verdict.
+   */
+  findingsFor(server: string): DelegationFinding[] {
+    if (!this.covers(server)) return [];
+    const verdict = this.verdict();
+    return verdict ? this.applicable(verdict.result, server) : [];
+  }
+
+  /** The verification mode of `server`'s delegation checks, when it has them. */
+  modeOf(server: string): "structural" | "signature" | undefined {
+    return this.modes.get(server);
   }
 
   /** Status summary for `server`, or `undefined` when it has no delegation checks. */

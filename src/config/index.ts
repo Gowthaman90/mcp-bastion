@@ -18,6 +18,8 @@ export {
   ListenConfigSchema,
   DelegationConfigSchema,
   DelegationServerConfigSchema,
+  AuthorizationConfigSchema,
+  RESERVED_CLIENT_NAMES,
 } from "./schema.js";
 export type {
   BastionConfig,
@@ -33,4 +35,5 @@ export type {
   ListenConfig,
   DelegationConfig,
   DelegationServerConfig,
+  AuthorizationConfig,
 } from "./schema.js";

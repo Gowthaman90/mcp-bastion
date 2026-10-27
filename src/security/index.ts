@@ -77,9 +77,35 @@ export type {
   DelegationUpstreamPolicy,
 } from "./delegation.js";
 export type { ToolCallOutcome } from "./types.js";
+export { findingKind } from "./types.js";
+export {
+  authorize,
+  mayList,
+  matchesToolPattern,
+  isValidToolPattern,
+  isPathWithin,
+  resolvePosixPath,
+  satisfiesConstraint,
+  argumentsSatisfied,
+  principalMatches,
+  IDENTITY_KINDS,
+} from "./authorization.js";
+export type {
+  ArgumentConstraint,
+  AuthorizationDecision,
+  AuthorizationPolicy,
+  AuthorizationReason,
+  AuthorizationRule,
+  AuthorizationScalar,
+  CallIdentities,
+  IdentityKind,
+  IdentityVerdict,
+  RulePrincipal,
+} from "./authorization.js";
 export { ToolRegistry } from "./tool-registry.js";
 export type { ObserveOptions } from "./tool-registry.js";
 export type {
+  FindingKind,
   Severity,
   SecurityFinding,
   PinStatus,

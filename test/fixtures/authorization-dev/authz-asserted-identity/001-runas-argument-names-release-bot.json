@@ -1,0 +1,738 @@
+{
+  "vector": "authz-asserted-identity",
+  "id": "authz-asserted-identity/001-runas-argument-names-release-bot",
+  "staged": true,
+  "severity": "high",
+  "description": "The documentation bot calls the rollback tool and fills its optional runAs argument with \"release-bot\", the one client allowed to roll back. A decision based on that argument instead of the authenticated client lets it through.",
+  "fixture": {
+    "type": "authorized-call",
+    "separator": "__",
+    "tools": [
+      {
+        "name": "repo__read_file",
+        "description": "Read a file from a repository checkout.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "Repository, owner/name."
+            },
+            "path": {
+              "type": "string",
+              "description": "Absolute path in the checkout."
+            }
+          },
+          "required": [
+            "repo",
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "repo__merge_pr",
+        "description": "Merge a pull request.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "Repository, owner/name."
+            },
+            "number": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "repo",
+            "number"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "deploy__promote",
+        "description": "Promote the current build of a service to an environment.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "string",
+              "description": "Service name."
+            },
+            "env": {
+              "type": "string",
+              "description": "Target environment."
+            }
+          },
+          "required": [
+            "service",
+            "env"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "deploy__rollback",
+        "description": "Roll a service back to its previous release.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "string",
+              "description": "Service name."
+            },
+            "env": {
+              "type": "string",
+              "description": "Environment."
+            },
+            "runAs": {
+              "type": "string",
+              "description": "Optional: the account to record as the operator."
+            }
+          },
+          "required": [
+            "service",
+            "env"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "ci__rerun_job",
+        "description": "Re-run a CI job.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "pipeline": {
+              "type": "string",
+              "description": "Pipeline name."
+            },
+            "job": {
+              "type": "string",
+              "description": "Job name."
+            }
+          },
+          "required": [
+            "pipeline",
+            "job"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "ci__extend_timeout",
+        "description": "Extend a running job's timeout.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "string",
+              "description": "Job name."
+            },
+            "minutes": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "job",
+            "minutes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "ci__delete_cache",
+        "description": "Delete a pipeline's build cache.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "pipeline": {
+              "type": "string",
+              "description": "Pipeline name."
+            }
+          },
+          "required": [
+            "pipeline"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "issues__label",
+        "description": "Add a label to an issue.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "issue": {
+              "type": "integer"
+            },
+            "label": {
+              "type": "string",
+              "description": "Label."
+            }
+          },
+          "required": [
+            "issue",
+            "label"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "policy": {
+      "default": "deny",
+      "rules": [
+        {
+          "effect": "allow",
+          "principal": {
+            "client": "docs-bot"
+          },
+          "tools": [
+            "repo__read_file"
+          ],
+          "args": {
+            "path": {
+              "pathWithin": "/srv/checkouts/handbook"
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "client": "release-bot"
+          },
+          "tools": [
+            "deploy__*"
+          ],
+          "args": {
+            "env": {
+              "in": [
+                "staging"
+              ]
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "client": "release-bot"
+          },
+          "tools": [
+            "repo__read_file"
+          ],
+          "args": {
+            "path": {
+              "pathWithin": "/srv/checkouts"
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "client": "triage-bot"
+          },
+          "tools": [
+            "issues__label",
+            "ci__*"
+          ]
+        },
+        {
+          "effect": "deny",
+          "principal": {
+            "client": "triage-bot"
+          },
+          "tools": [
+            "ci__delete_cache"
+          ]
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "client": "ci-bot"
+          },
+          "tools": [
+            "ci__extend_timeout"
+          ],
+          "args": {
+            "minutes": {
+              "max": 60
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "user": "user:mei.l"
+          },
+          "tools": [
+            "repo__*",
+            "ci__*"
+          ]
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "user": "user:mei.l"
+          },
+          "tools": [
+            "deploy__*"
+          ],
+          "args": {
+            "env": {
+              "in": [
+                "staging",
+                "prod"
+              ]
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "user": "user:omar.s"
+          },
+          "tools": [
+            "repo__read_file",
+            "issues__label"
+          ]
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "agent": "triage-agent"
+          },
+          "tools": [
+            "issues__label",
+            "repo__read_file",
+            "ci__rerun_job"
+          ]
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "agent": "release-agent"
+          },
+          "tools": [
+            "repo__merge_pr"
+          ]
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "agent": "release-agent"
+          },
+          "tools": [
+            "deploy__promote"
+          ],
+          "args": {
+            "env": {
+              "in": [
+                "staging"
+              ]
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "agent": "platform-agent"
+          },
+          "tools": [
+            "deploy__*"
+          ]
+        }
+      ]
+    },
+    "caller": {
+      "authenticatedBy": "bearer-client",
+      "client": "docs-bot"
+    },
+    "request": {
+      "method": "tools/call",
+      "name": "deploy__rollback",
+      "arguments": {
+        "service": "web",
+        "env": "staging",
+        "runAs": "release-bot"
+      }
+    }
+  },
+  "expected": {
+    "detect": true,
+    "enforce": true,
+    "signal": "authorize on the authenticated client (docs-bot), not on the runAs argument"
+  },
+  "benignControl": {
+    "type": "authorized-call",
+    "separator": "__",
+    "tools": [
+      {
+        "name": "repo__read_file",
+        "description": "Read a file from a repository checkout.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "Repository, owner/name."
+            },
+            "path": {
+              "type": "string",
+              "description": "Absolute path in the checkout."
+            }
+          },
+          "required": [
+            "repo",
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "repo__merge_pr",
+        "description": "Merge a pull request.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "description": "Repository, owner/name."
+            },
+            "number": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "repo",
+            "number"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "deploy__promote",
+        "description": "Promote the current build of a service to an environment.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "string",
+              "description": "Service name."
+            },
+            "env": {
+              "type": "string",
+              "description": "Target environment."
+            }
+          },
+          "required": [
+            "service",
+            "env"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "deploy__rollback",
+        "description": "Roll a service back to its previous release.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "string",
+              "description": "Service name."
+            },
+            "env": {
+              "type": "string",
+              "description": "Environment."
+            },
+            "runAs": {
+              "type": "string",
+              "description": "Optional: the account to record as the operator."
+            }
+          },
+          "required": [
+            "service",
+            "env"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "ci__rerun_job",
+        "description": "Re-run a CI job.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "pipeline": {
+              "type": "string",
+              "description": "Pipeline name."
+            },
+            "job": {
+              "type": "string",
+              "description": "Job name."
+            }
+          },
+          "required": [
+            "pipeline",
+            "job"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "ci__extend_timeout",
+        "description": "Extend a running job's timeout.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "job": {
+              "type": "string",
+              "description": "Job name."
+            },
+            "minutes": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "job",
+            "minutes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "ci__delete_cache",
+        "description": "Delete a pipeline's build cache.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "pipeline": {
+              "type": "string",
+              "description": "Pipeline name."
+            }
+          },
+          "required": [
+            "pipeline"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "issues__label",
+        "description": "Add a label to an issue.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "issue": {
+              "type": "integer"
+            },
+            "label": {
+              "type": "string",
+              "description": "Label."
+            }
+          },
+          "required": [
+            "issue",
+            "label"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "policy": {
+      "default": "deny",
+      "rules": [
+        {
+          "effect": "allow",
+          "principal": {
+            "client": "docs-bot"
+          },
+          "tools": [
+            "repo__read_file"
+          ],
+          "args": {
+            "path": {
+              "pathWithin": "/srv/checkouts/handbook"
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "client": "release-bot"
+          },
+          "tools": [
+            "deploy__*"
+          ],
+          "args": {
+            "env": {
+              "in": [
+                "staging"
+              ]
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "client": "release-bot"
+          },
+          "tools": [
+            "repo__read_file"
+          ],
+          "args": {
+            "path": {
+              "pathWithin": "/srv/checkouts"
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "client": "triage-bot"
+          },
+          "tools": [
+            "issues__label",
+            "ci__*"
+          ]
+        },
+        {
+          "effect": "deny",
+          "principal": {
+            "client": "triage-bot"
+          },
+          "tools": [
+            "ci__delete_cache"
+          ]
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "client": "ci-bot"
+          },
+          "tools": [
+            "ci__extend_timeout"
+          ],
+          "args": {
+            "minutes": {
+              "max": 60
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "user": "user:mei.l"
+          },
+          "tools": [
+            "repo__*",
+            "ci__*"
+          ]
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "user": "user:mei.l"
+          },
+          "tools": [
+            "deploy__*"
+          ],
+          "args": {
+            "env": {
+              "in": [
+                "staging",
+                "prod"
+              ]
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "user": "user:omar.s"
+          },
+          "tools": [
+            "repo__read_file",
+            "issues__label"
+          ]
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "agent": "triage-agent"
+          },
+          "tools": [
+            "issues__label",
+            "repo__read_file",
+            "ci__rerun_job"
+          ]
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "agent": "release-agent"
+          },
+          "tools": [
+            "repo__merge_pr"
+          ]
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "agent": "release-agent"
+          },
+          "tools": [
+            "deploy__promote"
+          ],
+          "args": {
+            "env": {
+              "in": [
+                "staging"
+              ]
+            }
+          }
+        },
+        {
+          "effect": "allow",
+          "principal": {
+            "agent": "platform-agent"
+          },
+          "tools": [
+            "deploy__*"
+          ]
+        }
+      ]
+    },
+    "caller": {
+      "authenticatedBy": "bearer-client",
+      "client": "release-bot"
+    },
+    "request": {
+      "method": "tools/call",
+      "name": "deploy__rollback",
+      "arguments": {
+        "service": "web",
+        "env": "staging",
+        "runAs": "release-bot"
+      }
+    },
+    "expected": {
+      "detect": false,
+      "enforce": false
+    }
+  },
+  "intent": {
+    "violates": [
+      "client:no-grant"
+    ],
+    "assertedIdentity": {
+      "where": "request.arguments.runAs",
+      "as": {
+        "client": "release-bot"
+      }
+    }
+  },
+  "provenance": "Synthetic. CWE-639 (Authorization Bypass Through User-Controlled Key); CWE-807."
+}

@@ -5,7 +5,7 @@
  *
  * @packageDocumentation
  */
-import type { Severity } from "../security/index.js";
+import type { FindingKind, Severity } from "../security/index.js";
 
 /** Version of the {@link AuditEvent} schema. Bump on any breaking change. */
 export const AUDIT_SCHEMA_VERSION = 1;
@@ -21,7 +21,8 @@ export type AuditDecision =
   | "blocked_dataflow"
   | "blocked_input_required"
   | "blocked_request_state"
-  | "blocked_delegation";
+  | "blocked_delegation"
+  | "blocked_authorization";
 
 /** The observed outcome of a tool call. */
 export type AuditOutcome = "ok" | "error" | "blocked";
@@ -59,6 +60,32 @@ export interface AuditDelegationRecord {
   findings: { rule: string; severity: Severity }[];
 }
 
+/**
+ * The runtime-authorization decision on one call. Rule ids and identity kinds only: never a user
+ * `sub`, a token, or any other policy content.
+ */
+export interface AuditAuthorizationRecord {
+  effect: "allow" | "deny";
+  /** The deciding rule id (see `AuthorizationDecision.rule`), or `null`. */
+  rule: string | null;
+  /** Whether no rule decided (refused for lack of a grant, or allowed by `default: "allow"`). */
+  byDefault: boolean;
+  /** The authenticated client name (`listen.clients` key, `default`, `stdio` or `anonymous`). */
+  client: string;
+  /** Identity kinds the call carried, e.g. `["client", "user", "agent"]`. */
+  identities: string[];
+  /** `<kind>:<reason>` per refused identity (`denied`, `no-grant`, `argument`, `unverified`). */
+  violations: string[];
+}
+
+/** One finding as recorded in an audit event. */
+export interface AuditFinding {
+  rule: string;
+  severity: Severity;
+  /** `heuristic` (pattern-based) or `deterministic` (exact check). */
+  kind: FindingKind;
+}
+
 /** A single, structured audit record for one tool call. */
 export interface AuditEvent {
   schemaVersion: number;
@@ -79,9 +106,9 @@ export interface AuditEvent {
   outcome: AuditOutcome;
   durationMs: number;
   /** Security findings on the call (definition, arguments and result), when any. */
-  findings?: { rule: string; severity: Severity }[];
+  findings?: AuditFinding[];
   /** The subset of `findings` raised by scanning the tool's result, when any. */
-  responseFindings?: { rule: string; severity: Severity }[];
+  responseFindings?: AuditFinding[];
   /** Number of secret values inline DLP redacted from the tool's result, when any. */
   redactedSecrets?: number;
   /**
@@ -99,6 +126,8 @@ export interface AuditEvent {
   forwardedHeaders?: string[];
   /** Who acted for whom (keyless delegation checks), on calls to an upstream with `delegation`. */
   delegation?: AuditDelegationRecord;
+  /** The runtime-authorization decision, when `authorization` is enabled. */
+  authorization?: AuditAuthorizationRecord;
   /** Previous event's hash (present only when tamper-evidence is enabled). */
   prevHash?: string;
   /** This event's hash over its content + `prevHash` (tamper-evidence). */

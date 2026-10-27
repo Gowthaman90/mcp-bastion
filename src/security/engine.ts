@@ -27,6 +27,7 @@ import { checkInputRequests, isInputRequired, stripFlaggedInputRequests } from "
 import { hasSeverityAtLeast, scanText } from "./poisoning.js";
 import { validateArguments } from "./schema.js";
 import { ToolRegistry } from "./tool-registry.js";
+import { findingKind } from "./types.js";
 import type {
   Interceptor,
   SecurityDecision,
@@ -207,7 +208,10 @@ export class SecurityEngine {
 
   /** Per-tool security report (backs `bastion__security`). */
   status(): ToolSecurityReport[] {
-    return this.registry.report();
+    return this.registry.report().map((r) => ({
+      ...r,
+      findings: r.findings.map((f) => ({ ...f, kind: findingKind(f.rule) })),
+    }));
   }
 
   /** Re-approve a tool's current definition (backs `bastion__approve`). */

@@ -29,6 +29,11 @@ export interface BastionServerOptions {
    */
   principal?: string;
   /**
+   * The authenticated client name `authorization` rules match: a `listen.clients` name, `default`
+   * (the `listen.authToken` bearer), `anonymous` (unauthenticated loopback HTTP) or `stdio`.
+   */
+  client?: string;
+  /**
    * `true` for a long-lived (stdio) connection: the server is registered to receive
    * `tools/list_changed` pushes. Per-request HTTP servers pass `false` (the handler's notifier is
    * used instead).
@@ -53,6 +58,7 @@ export function buildBastionServer(
   opts: BastionServerOptions = {},
 ): Server {
   const principal = opts.principal ?? "stdio";
+  const client = opts.client ?? "stdio";
   // Policed cache hints (MCP 2026-07-28): never a longer TTL, never a wider scope, than policy allows.
   const hints = manager.listCacheHints();
   const server = new Server(
@@ -68,9 +74,13 @@ export function buildBastionServer(
   // definition longer, or share it wider, than policy allows. Pre-revision upstreams send none.
   server.setRequestHandler("tools/list", async () => {
     // Connect idle on-demand upstreams with this request's forwarded identity before listing.
-    await manager.prepareUpstreams();
+    await manager.prepareUpstreams(client);
+    // With `authorization` enabled, tools this client could never be allowed are not listed.
+    const control = buildControlTools(manager.separator).filter((t) =>
+      manager.mayListControlTool(t.name, client),
+    );
     return {
-      tools: [...manager.listUpstreamTools(), ...buildControlTools(manager.separator)],
+      tools: [...manager.listUpstreamTools(client), ...control],
       ...(hints ?? {}),
     };
   });
@@ -79,9 +89,13 @@ export function buildBastionServer(
   // MRTR retry material (inputResponses + echoed requestState) when present.
   server.setRequestHandler("tools/call", async (req, ctx) => {
     const { name, arguments: args } = req.params;
-    logger.debug({ tool: name, principal }, "tools/call");
+    logger.debug({ tool: name, principal, client }, "tools/call");
     if (isControlToolName(name, manager.separator)) {
-      return handleControlTool(name, (args ?? {}) as Record<string, unknown>, manager);
+      const controlArgs = (args ?? {}) as Record<string, unknown>;
+      // Control tools are authorized under server name `bastion` before they run.
+      const refused = manager.authorizeControlTool(name, controlArgs, client, principal);
+      if (refused) return refused;
+      return handleControlTool(name, controlArgs, manager);
     }
     const mcpReq = ctx.mcpReq as {
       inputResponses?: Record<string, unknown>;
@@ -91,6 +105,7 @@ export function buildBastionServer(
       typeof mcpReq.requestState === "function" ? mcpReq.requestState() : undefined;
     const outcome = await manager.callUpstreamTool(name, args ?? {}, {
       principal,
+      client,
       inputResponses: mcpReq.inputResponses,
       requestState: typeof requestState === "string" ? requestState : undefined,
     });

@@ -5,13 +5,59 @@
  */
 import type { CallToolResult, InputRequiredResult } from "@modelcontextprotocol/server";
 
-import type { AuditDelegationRecord } from "../audit/types.js";
+import type { AuditAuthorizationRecord, AuditDelegationRecord } from "../audit/types.js";
 
 /** What a tool call yields: a complete result, or an MRTR `input_required` continuation. */
 export type ToolCallOutcome = CallToolResult | InputRequiredResult;
 
 /** Severity of a security finding. */
 export type Severity = "low" | "medium" | "high";
+
+/**
+ * Whether a finding comes from a heuristic (pattern-based, can misfire on benign text) or a
+ * deterministic check (an exact comparison against a pin, a schema, a policy or a token's claims).
+ */
+export type FindingKind = "heuristic" | "deterministic";
+
+/** Deterministic rules by exact id; prefixes cover rule families. Everything else is heuristic. */
+const DETERMINISTIC_RULES: ReadonlySet<string> = new Set([
+  // Definition integrity (pinning) and server identity.
+  "tool-definition-changed",
+  "server-identity-changed",
+  "unverified-server-identity",
+  "config-drift",
+  // Arguments against the declared schema.
+  "undeclared-parameter",
+  "type-violation",
+  "enum-violation",
+  // Cross-server data flow (exact values seen earlier in another server's result).
+  "cross-server-exfil",
+  // MRTR structure (custody rules are covered by the `requeststate-` prefix).
+  "mrtr-url-elicitation",
+  // Transport, headers, cache hints, scopes.
+  "insecure-transport",
+  "cross-origin-request",
+  "unvalidated-header-routing",
+  "invalid-cache-ttl",
+  "invalid-cache-scope",
+  "excessive-cache-ttl",
+  "public-cache-scope",
+  "uncacheable-result-hints",
+  "stale-cache-after-invalidation",
+  "excessive-scope",
+  "over-privileged-scope",
+]);
+const DETERMINISTIC_PREFIXES = ["delegation-", "authorization-", "header-", "requeststate-"];
+
+/**
+ * The kind of a finding, by rule id: poisoning, response, command-injection, DLP and steering
+ * heuristics are `heuristic`; pinning, identity, schema, data-flow, custody, delegation and
+ * authorization checks are `deterministic`. Unknown rules are `heuristic` (never overclaim).
+ */
+export function findingKind(rule: string): FindingKind {
+  if (DETERMINISTIC_RULES.has(rule)) return "deterministic";
+  return DETERMINISTIC_PREFIXES.some((p) => rule.startsWith(p)) ? "deterministic" : "heuristic";
+}
 
 /** A single suspicious signal detected in a tool definition. */
 export interface SecurityFinding {
@@ -21,6 +67,8 @@ export interface SecurityFinding {
   severity: Severity;
   /** A short excerpt of the offending text, for human review. */
   excerpt: string;
+  /** `heuristic` or `deterministic` (see {@link findingKind}); set on reported findings. */
+  kind?: FindingKind;
 }
 
 /** Pin state of a tool relative to the first definition Bastion approved (trust-on-first-use). */
@@ -48,7 +96,8 @@ export type SecurityDecision =
   | "blocked_dataflow"
   | "blocked_input_required"
   | "blocked_request_state"
-  | "blocked_delegation";
+  | "blocked_delegation"
+  | "blocked_authorization";
 
 /** Context passed through the interceptor pipeline for a single tool call. */
 export interface ToolCallContext {
@@ -72,6 +121,8 @@ export interface ToolCallContext {
   forwardedHeaders?: string[];
   /** Who acted for whom, when the upstream has `delegation` configured and a token was carried. */
   delegation?: AuditDelegationRecord;
+  /** The runtime-authorization decision, when `authorization` is enabled. */
+  authorization?: AuditAuthorizationRecord;
 
   // --- Annotations populated by interceptors for downstream observers (e.g. audit) ---
 

@@ -22,6 +22,7 @@ export type {
   ListenConfig,
   DelegationConfig,
   DelegationServerConfig,
+  AuthorizationConfig,
 } from "./config/index.js";
 
 // Core domain
@@ -34,8 +35,8 @@ export {
 export type { ConnectionState, ServerStatus, ReconnectResult } from "./core/index.js";
 
 // Proxy (client-facing server + Streamable HTTP listener)
-export { buildBastionServer, startHttpServer } from "./proxy/index.js";
-export type { HttpListener, HttpListenOptions } from "./proxy/index.js";
+export { buildBastionServer, startHttpServer, resolveListenClients } from "./proxy/index.js";
+export type { HttpListener, HttpListenOptions, ListenClientCredential } from "./proxy/index.js";
 
 // Security (runtime tool pinning + poisoning inspection)
 export {
@@ -83,6 +84,13 @@ export {
   delegationKeySet,
   decodeJwsCompact,
   subjectPseudonym,
+  // Runtime authorization (pure evaluator)
+  authorize,
+  mayList,
+  matchesToolPattern,
+  isPathWithin,
+  resolvePosixPath,
+  findingKind,
 } from "./security/index.js";
 export type { OpenResult, SealOptions, OpenOptions, ToolCallOutcome } from "./security/index.js";
 export type {
@@ -106,6 +114,18 @@ export type {
   ClampedCacheHints,
 } from "./security/index.js";
 export type { Severity, SecurityFinding, PinStatus, ToolSecurityReport } from "./security/index.js";
+export type {
+  ArgumentConstraint,
+  AuthorizationDecision,
+  AuthorizationPolicy,
+  AuthorizationReason,
+  AuthorizationRule,
+  CallIdentities,
+  FindingKind,
+  IdentityKind,
+  IdentityVerdict,
+  RulePrincipal,
+} from "./security/index.js";
 
 // Audit & compliance
 export {
@@ -129,6 +149,8 @@ export type {
   FrameworkMapping,
   ComplianceReport,
   AuditDelegationRecord,
+  AuditAuthorizationRecord,
+  AuditFinding,
 } from "./audit/index.js";
 export type { AuditConfig, SinkConfig } from "./config/index.js";
 

@@ -26,8 +26,14 @@ export interface HttpListenOptions {
   host: string;
   port: number;
   path: string;
-  /** Bearer token required on every request (constant-time compared). */
+  /** Bearer token required on every request (constant-time compared). It is the client `default`. */
   authToken?: string;
+  /**
+   * Named clients, each with its own bearer token (see {@link resolveListenClients}). A request
+   * presenting one acts as `client:<name>`. With `authToken` and/or `clients` set, every request
+   * must present one of the configured tokens.
+   */
+  clients?: readonly ListenClientCredential[];
   /** Accepted for compatibility; sessions no longer exist in the stateless core. */
   maxSessions?: number;
   /** Max request body size in bytes before a 413. */
@@ -39,6 +45,43 @@ export interface HttpListenOptions {
   validateRoutingHeaders?: boolean;
   /** Serve pre-2026-07-28 clients statelessly (default) or refuse them (`-32022`). */
   legacy?: "stateless" | "reject";
+}
+
+/** One named client's resolved bearer token. */
+export interface ListenClientCredential {
+  name: string;
+  token: string;
+}
+
+/**
+ * Read each `listen.clients` token from its environment variable. Throws when a variable is unset
+ * or empty, or when two clients (or a client and `authToken`) share a token, since the caller could
+ * then not be told apart.
+ */
+export function resolveListenClients(
+  listen: { authToken?: string; clients?: Record<string, { tokenEnv: string }> },
+  env: NodeJS.ProcessEnv = process.env,
+): ListenClientCredential[] {
+  const resolved: ListenClientCredential[] = [];
+  const owners = new Map<string, string>();
+  if (listen.authToken) owners.set(listen.authToken, "default (listen.authToken)");
+  for (const [name, { tokenEnv }] of Object.entries(listen.clients ?? {})) {
+    const token = env[tokenEnv];
+    if (!token) {
+      throw new Error(
+        `listen.clients.${name}: environment variable ${tokenEnv} is not set (or empty); it must hold this client's bearer token`,
+      );
+    }
+    const owner = owners.get(token);
+    if (owner !== undefined) {
+      throw new Error(
+        `listen.clients.${name}: its token is the same as ${owner}'s; every client needs its own token`,
+      );
+    }
+    owners.set(token, name);
+    resolved.push({ name, token });
+  }
+  return resolved;
 }
 
 /** JSON-RPC error code the 2026-07-28 revision assigns to a header/body disagreement. */
@@ -64,22 +107,41 @@ function hostnameOf(hostHeader: string | undefined): string {
   return h.split(":")[0];
 }
 
-/** Constant-time bearer-token check. */
-function isAuthorized(header: string | undefined, token: string): boolean {
+const sha256 = (value: string): Buffer => createHash("sha256").update(value).digest();
+
+/**
+ * The client whose bearer token the `Authorization` header presents, or `undefined`. Compares the
+ * SHA-256 digest of the presented token with every configured one in constant time, without
+ * stopping at the first match, so timing reveals neither which client matched nor a token's length.
+ */
+function authenticate(
+  header: string | undefined,
+  credentials: readonly { name: string; token: string; digest: Buffer }[],
+): { name: string; token: string } | undefined {
   const m = /^Bearer\s+(.+)$/i.exec(header ?? "");
-  if (!m) return false;
-  const a = Buffer.from(m[1]);
-  const b = Buffer.from(token);
-  return a.length === b.length && timingSafeEqual(a, b);
+  if (!m) return undefined;
+  const presented = sha256(m[1]);
+  let found: { name: string; token: string } | undefined;
+  for (const c of credentials) {
+    if (timingSafeEqual(presented, c.digest) && !found) found = { name: c.name, token: c.token };
+  }
+  return found;
 }
 
 /**
- * The principal a request acts as: a stable, non-reversible hash of the bearer token, or
- * `http-anonymous` on an unauthenticated loopback listener. Sealed `requestState` is bound to it.
+ * The principal a request acts as: `client:<name>` for a named client, a stable, non-reversible
+ * hash of the bearer token for `listen.authToken`, or `http-anonymous` on an unauthenticated
+ * loopback listener. Sealed `requestState` is bound to it.
  */
 export function principalOf(authInfo: AuthInfo | undefined): string {
   if (!authInfo?.token) return "http-anonymous";
+  if (authInfo.clientId && authInfo.clientId !== "default") return `client:${authInfo.clientId}`;
   return "bearer:" + createHash("sha256").update(authInfo.token).digest("hex").slice(0, 16);
+}
+
+/** The client name `authorization` rules match: the bearer's client, or `anonymous`. */
+export function clientOf(authInfo: AuthInfo | undefined): string {
+  return authInfo?.token && authInfo.clientId ? authInfo.clientId : "anonymous";
 }
 
 /** A running HTTP listener with a graceful shutdown. */
@@ -98,10 +160,20 @@ export async function startHttpServer(
   manager: UpstreamManager,
   opts: HttpListenOptions,
 ): Promise<HttpListener> {
+  const credentials = [
+    ...(opts.authToken ? [{ name: "default", token: opts.authToken }] : []),
+    ...(opts.clients ?? []),
+  ].map((c) => ({ ...c, digest: sha256(c.token) }));
+  if (credentials.some((c) => c.token === "")) {
+    throw new Error("mcp-bastion HTTP: a client bearer token is empty");
+  }
+  if (new Set(credentials.map((c) => c.name)).size !== credentials.length) {
+    throw new Error("mcp-bastion HTTP: client names must be unique");
+  }
   // Fail closed: never expose an unauthenticated proxy on a non-loopback interface.
-  if (!isLoopbackHostname(opts.host) && !opts.authToken) {
+  if (!isLoopbackHostname(opts.host) && credentials.length === 0) {
     throw new Error(
-      `Refusing to bind mcp-bastion HTTP to non-loopback host "${opts.host}" without listen.authToken — ` +
+      `Refusing to bind mcp-bastion HTTP to non-loopback host "${opts.host}" without listen.authToken or listen.clients — ` +
         `an unauthenticated public bind would expose every proxied tool. Set listen.authToken or bind 127.0.0.1.`,
     );
   }
@@ -111,7 +183,11 @@ export async function startHttpServer(
   // token the SDK receives as `authInfo`, so sealed continuations cannot cross principals.
   const handler: McpHttpHandler = createMcpHandler(
     (ctx) =>
-      buildBastionServer(manager, { principal: principalOf(ctx.authInfo), persistent: false }),
+      buildBastionServer(manager, {
+        principal: principalOf(ctx.authInfo),
+        client: clientOf(ctx.authInfo),
+        persistent: false,
+      }),
     {
       legacy: opts.legacy ?? "stateless",
       onerror: (err) => logger.warn({ err: err.message }, "mcp handler error"),
@@ -150,14 +226,16 @@ export async function startHttpServer(
       return;
     }
 
-    // Authentication (M1): require the bearer token when one is configured.
-    if (opts.authToken && !isAuthorized(req.headers.authorization, opts.authToken)) {
-      res.writeHead(401, { "www-authenticate": "Bearer" }).end("Unauthorized");
-      return;
+    // Authentication (M1): require one of the configured bearer tokens when any is configured.
+    let authInfo: AuthInfo | undefined;
+    if (credentials.length > 0) {
+      const caller = authenticate(req.headers.authorization, credentials);
+      if (!caller) {
+        res.writeHead(401, { "www-authenticate": "Bearer" }).end("Unauthorized");
+        return;
+      }
+      authInfo = { token: caller.token, clientId: caller.name, scopes: [] };
     }
-    const authInfo: AuthInfo | undefined = opts.authToken
-      ? { token: opts.authToken, clientId: "mcp-bastion-bearer", scopes: [] }
-      : undefined;
 
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     if (url.pathname !== opts.path) {

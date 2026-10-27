@@ -101,7 +101,14 @@ export async function handleControlTool(
   const separator = manager.separator;
 
   if (name === controlToolName(ControlAction.Status, separator)) {
-    return textResult(JSON.stringify({ servers: manager.status() }, null, 2));
+    const authorization = manager.authorizationStatus();
+    return textResult(
+      JSON.stringify(
+        { servers: manager.status(), ...(authorization ? { authorization } : {}) },
+        null,
+        2,
+      ),
+    );
   }
 
   if (name === controlToolName(ControlAction.Reconnect, separator)) {

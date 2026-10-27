@@ -15,7 +15,7 @@
  *
  * @packageDocumentation
  */
-import type { InputRequiredResult, Tool } from "@modelcontextprotocol/server";
+import type { CallToolResult, InputRequiredResult, Tool } from "@modelcontextprotocol/server";
 
 import { AuditEngine, createSinks, type ComplianceReport } from "../audit/index.js";
 import type { BastionConfig } from "../config/index.js";
@@ -40,6 +40,11 @@ import type {
   ToolCallOutcome,
   ToolSecurityReport,
 } from "../security/index.js";
+import {
+  AuthorizationGate,
+  CONTROL_SERVER,
+  type AuthorizationCheck,
+} from "./authorization-gate.js";
 import { ControlAction, controlToolName } from "./constants.js";
 import { DelegationGate } from "./delegation-gate.js";
 import type { ReconnectResult, ServerStatus, ToolRoute } from "./types.js";
@@ -59,6 +64,8 @@ export class UpstreamManager {
   private readonly requestStateTtlSeconds: number;
   /** Keyless delegation checks (inactive unless some upstream configures `delegation`). */
   private readonly delegation: DelegationGate;
+  /** Runtime authorization (inactive unless `authorization.enabled`). */
+  private readonly authorization: AuthorizationGate;
 
   /**
    * @param config The validated Bastion configuration.
@@ -73,6 +80,7 @@ export class UpstreamManager {
     this.requestStateTtlSeconds = config.security.requestStateTtlSeconds;
     this.security = new SecurityEngine(config.security, this.namespaceSeparator);
     this.delegation = new DelegationGate(config);
+    this.authorization = new AuthorizationGate(config, this.delegation);
 
     // Audit is placed FIRST so it records blocked calls (short-circuited by the
     // security interceptors) as well as allowed ones.
@@ -162,14 +170,19 @@ export class UpstreamManager {
   /**
    * Before a `tools/list`: connect every idle `onDemand` upstream the current request can reach
    * (it carries the headers that upstream forwards), and re-list any marked stale. Failures are
-   * logged and recorded as the upstream's `lastError`; the list simply omits that upstream.
+   * logged and recorded as the upstream's `lastError`; the list simply omits that upstream. With
+   * `authorization` enabled, an upstream none of whose tools `client` could ever be allowed is not
+   * connected for it.
+   *
+   * @param client The authenticated client name (`stdio` when omitted).
    */
-  async prepareUpstreams(): Promise<void> {
+  async prepareUpstreams(client = "stdio"): Promise<void> {
     await this.delegation.ensure();
     await Promise.allSettled(
       [...this.upstreams.values()].map(async (upstream) => {
         if (upstream.missingForwardedHeaders().length > 0) return;
         if (this.delegationBlocksList(upstream.name)) return;
+        if (!this.authorization.mayReach(upstream.name, client)) return;
         try {
           await upstream.prepareForRequest();
         } catch (err) {
@@ -186,9 +199,12 @@ export class UpstreamManager {
    * The aggregate, namespaced tool list from currently-connected upstreams.
    *
    * Control tools are intentionally NOT included here — the proxy layer appends
-   * them — keeping this method focused on upstream aggregation.
+   * them — keeping this method focused on upstream aggregation. With `authorization` enabled, a
+   * tool `client` could never be allowed to call (whatever the arguments) is left out.
+   *
+   * @param client The authenticated client name (`stdio` when omitted).
    */
-  listUpstreamTools(): Tool[] {
+  listUpstreamTools(client = "stdio"): Tool[] {
     this.syncSecurity(); // pin definitions on discovery so later changes are caught
     const tools: Tool[] = [];
     for (const [name, upstream] of this.upstreams) {
@@ -196,7 +212,9 @@ export class UpstreamManager {
       // A connection shared with other users is still not this request's to list through.
       if (this.delegation.blockingRules(name).length > 0) continue;
       for (const tool of upstream.lastKnownTools) {
-        tools.push({ ...tool, name: this.prefixToolName(name, tool.name) });
+        const namespaced = this.prefixToolName(name, tool.name);
+        if (!this.authorization.mayList(name, namespaced, client)) continue;
+        tools.push({ ...tool, name: namespaced });
       }
     }
     return tools;
@@ -215,12 +233,16 @@ export class UpstreamManager {
     args: unknown,
     opts: {
       principal?: string;
+      /** The authenticated client name, for `authorization` (`stdio` when omitted). */
+      client?: string;
       inputResponses?: Record<string, unknown>;
       requestState?: string;
     } = {},
   ): Promise<ToolCallOutcome> {
     const callArgs = (args ?? {}) as Record<string, unknown>;
     const principal = opts.principal ?? "stdio";
+    const client = opts.client ?? "stdio";
+    let authz: AuthorizationCheck | undefined;
 
     // Gateway mode: the target upstream may need this request's forwarded identity. Without it the
     // upstream is never called; with it, an idle on-demand upstream is connected as this caller.
@@ -237,6 +259,12 @@ export class UpstreamManager {
       await this.delegation.ensure();
       const refused = this.delegationPreflight(target.name, name, callArgs, principal);
       if (refused) return refused;
+      // Authorization also runs before any upstream contact: a refused call never triggers an
+      // on-demand connect carrying this caller's forwarded headers. MRTR retries come back through
+      // here, so every round is re-authorized.
+      authz = this.authorization.check(target.name, name, callArgs, client);
+      const denied = this.authorizationPreflight(target.name, name, callArgs, principal, authz);
+      if (denied) return denied;
       try {
         await target.prepareForRequest();
       } catch (err) {
@@ -260,6 +288,9 @@ export class UpstreamManager {
       await this.delegation.ensure();
       const refused = this.delegationPreflight(route.server, name, callArgs, principal);
       if (refused) return refused;
+      authz = this.authorization.check(route.server, name, callArgs, client);
+      const denied = this.authorizationPreflight(route.server, name, callArgs, principal, authz);
+      if (denied) return denied;
     }
 
     const upstream = this.upstreams.get(route.server);
@@ -315,6 +346,8 @@ export class UpstreamManager {
     if (delegated?.record) ctx.delegation = delegated.record;
     // Warn-only delegation findings that `balanced` would have blocked (shadow mode).
     if (delegated?.wouldBlock) ctx.wouldBlock = "blocked_delegation";
+    if (authz) ctx.authorization = authz.record;
+    if (authz?.wouldBlock) ctx.wouldBlock ??= "blocked_authorization";
     try {
       // Security interceptors run first; the terminal step is the real upstream call.
       const outcome = await runPipeline(
@@ -401,6 +434,73 @@ export class UpstreamManager {
     );
   }
 
+  /**
+   * Apply an authorization verdict before any upstream contact. A refusal under `block` is audited
+   * (`blocked_authorization`) and answered with a tool error naming at most the deny rule's id; a
+   * refusal under `warn` is logged and the call goes ahead (the pipeline records `wouldBlock`).
+   */
+  private authorizationPreflight(
+    server: string,
+    name: string,
+    args: Record<string, unknown>,
+    principal: string,
+    check: AuthorizationCheck | undefined,
+  ): CallToolResult | undefined {
+    if (!check || check.decision.allowed) return undefined;
+    const { violations, rule } = check.decision;
+    if (!check.blocks) {
+      logger.warn(
+        { tool: name, server, client: check.record.client, rule, violations },
+        "authorization would deny this call (warn only)",
+      );
+      return undefined;
+    }
+    logger.warn(
+      { tool: name, server, client: check.record.client, rule, violations },
+      "call blocked by authorization policy",
+    );
+    const upstream = this.upstreams.get(server);
+    const prefix = server + this.separator;
+    const delegated = this.delegation.covers(server) ? this.delegation.check(server) : undefined;
+    this.audit?.recordPreflight({
+      server,
+      toolName: name.startsWith(prefix) ? name.slice(prefix.length) : name,
+      namespacedName: name,
+      args,
+      principal,
+      ...(upstream?.presentForwardedHeaders().length
+        ? { forwardedHeaders: upstream.presentForwardedHeaders() }
+        : {}),
+      ...(delegated?.record ? { delegation: delegated.record } : {}),
+      authorization: check.record,
+      securityDecision: "blocked_authorization",
+    });
+    return textResult(
+      `Blocked by mcp-bastion: this caller is not authorized to call "${name}" ` +
+        `(${rule !== null ? `rule ${rule}` : "no matching grant"}).`,
+      true,
+    );
+  }
+
+  /**
+   * Authorize a control-tool call (`bastion__*`), under server name `bastion` with the client as the
+   * only identity. Returns the refusal, or `undefined` when the call may go ahead.
+   */
+  authorizeControlTool(
+    name: string,
+    args: Record<string, unknown>,
+    client = "stdio",
+    principal = "stdio",
+  ): CallToolResult | undefined {
+    const check = this.authorization.check(CONTROL_SERVER, name, args, client);
+    return this.authorizationPreflight(CONTROL_SERVER, name, args, principal, check);
+  }
+
+  /** Whether a control tool belongs in `client`'s `tools/list`. */
+  mayListControlTool(name: string, client = "stdio"): boolean {
+    return this.authorization.mayList(CONTROL_SERVER, name, client);
+  }
+
   /** Whether the current request's delegation verdict blocks `server` from a `tools/list` (logged). */
   private delegationBlocksList(server: string): boolean {
     const rules = this.delegation.blockingRules(server);
@@ -436,6 +536,11 @@ export class UpstreamManager {
       if (!best || server.length > best.length) best = server;
     }
     return best;
+  }
+
+  /** Authorization policy summary for `bastion__status`, or `undefined` when disabled. */
+  authorizationStatus(): ReturnType<AuthorizationGate["status"]> {
+    return this.authorization.status();
   }
 
   /** Snapshot the health of every upstream (backs `bastion__status`). */

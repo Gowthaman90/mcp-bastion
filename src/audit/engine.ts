@@ -12,7 +12,7 @@ import type { ToolCallOutcome } from "../security/types.js";
 
 import type { AuditConfig } from "../config/index.js";
 import { logger } from "../observability/index.js";
-import type { Interceptor, ToolCallContext } from "../security/index.js";
+import { findingKind, type Interceptor, type ToolCallContext } from "../security/index.js";
 import { chainHash } from "./chain.js";
 import { frameworksFor, type ComplianceReport } from "./compliance.js";
 import { prepareArgs } from "./redaction.js";
@@ -126,12 +126,17 @@ export class AuditEngine {
       decision,
       outcome,
       durationMs,
-      findings: ctx.findings?.map((f) => ({ rule: f.rule, severity: f.severity })),
+      findings: ctx.findings?.map((f) => ({
+        rule: f.rule,
+        severity: f.severity,
+        kind: findingKind(f.rule),
+      })),
       ...(ctx.responseFindings?.length
         ? {
             responseFindings: ctx.responseFindings.map((f) => ({
               rule: f.rule,
               severity: f.severity,
+              kind: findingKind(f.rule),
             })),
           }
         : {}),
@@ -141,6 +146,7 @@ export class AuditEngine {
       args: prepareArgs(ctx.args, this.config.includeArgs, this.config.redactKeys),
       ...(ctx.forwardedHeaders?.length ? { forwardedHeaders: [...ctx.forwardedHeaders] } : {}),
       ...(ctx.delegation ? { delegation: ctx.delegation } : {}),
+      ...(ctx.authorization ? { authorization: ctx.authorization } : {}),
     };
 
     let event: AuditEvent = core;

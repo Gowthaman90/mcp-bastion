@@ -3,3 +3,6 @@ node_modules/
 coverage/
 package-lock.json
 LICENSE
+
+# Verbatim copies of benchmark fixtures (kept byte-identical to the source)
+test/fixtures/authorization-dev/

@@ -50,6 +50,20 @@ describe("enforcementProfile resolution", () => {
     }
   });
 
+  it("runtime authorization is deterministic: blocks under balanced and strict, warns under observe", () => {
+    expect(SecurityConfigSchema.parse({}).onAuthorization).toBe("block");
+    expect(SecurityConfigSchema.parse({ enforcementProfile: "strict" }).onAuthorization).toBe(
+      "block",
+    );
+    expect(SecurityConfigSchema.parse({ enforcementProfile: "observe" }).onAuthorization).toBe(
+      "warn",
+    );
+    expect(
+      SecurityConfigSchema.parse({ enforcementProfile: "balanced", onAuthorization: "warn" })
+        .onAuthorization,
+    ).toBe("warn");
+  });
+
   it("an explicit on* value overrides the profile", () => {
     const c = SecurityConfigSchema.parse({
       enforcementProfile: "observe",

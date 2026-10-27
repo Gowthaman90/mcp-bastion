@@ -97,6 +97,7 @@ describe("audit & compliance (v0.3, end-to-end via the manager)", () => {
     expect(events[1].findings).toContainEqual({
       rule: "tool-definition-changed",
       severity: "high",
+      kind: "deterministic",
     });
     expect(events[2].wouldBlock).toBe("blocked_schema");
     expect(events[2].findings?.map((f) => f.rule)).toContain("undeclared-parameter");
