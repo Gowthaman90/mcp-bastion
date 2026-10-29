@@ -268,7 +268,7 @@ only standard MCP calls:
 | `delegation.gatewayAudiences`             | string[]                            | `[]`                 | Audiences that identify Bastion itself; a token for one of them (or with no `aud`) is passthrough.                           |
 | `delegation.oneUserPerRequest`            | boolean                             | `true`               | All delegate tokens in one request must name the same user (`iss` + `sub`).                                                  |
 | `delegation.recordSubject`                | `hash` \| `plain`                   | `hash`               | Audit subject: HMAC pseudonym of `iss\|sub`, or `sub` as is.                                                                 |
-| `delegation.subjectKey`                   | string (≥16)                        | see below            | Pseudonym key; or `MCP_BASTION_SUBJECT_KEY`, then the audit integrity key, then random per process.                          |
+| `delegation.subjectKey`                   | string (≥16)                        | see below            | Pseudonym key; or `MCP_BASTION_SUBJECT_KEY`, then the audit integrity key, then random per process (warned at start-up).     |
 | `security.onDelegation`                   | `block` \| `warn`                   | `block`              | Action on a delegation finding other than the chain rules.                                                                   |
 | `security.onDelegationChain`              | `block` \| `warn`                   | `warn`               | Action on `delegation-chain-depth` / `-chain-cycle` (`block` under `strict`).                                                |
 | `listen.mode`                             | `stdio` \| `http`                   | `stdio`              | Serve Bastion over stdio or Streamable HTTP.                                                                                 |
@@ -440,7 +440,9 @@ medium severity and only warned on unless `security.onDelegationChain` (or the `
   `verified` (`structural`, `signature` when the signature verified, or `failed`) and the findings. Never the token. In `hash` mode the subject is `"hmac:"` + the
   first 16 hex characters of HMAC-SHA256(key, `iss|sub`): an operator with the key can recompute it to find
   one user's records. The key is `delegation.subjectKey`, else `MCP_BASTION_SUBJECT_KEY`, else the audit
-  integrity key, else a random key per process, whose pseudonyms do **not** link across restarts.
+  integrity key, else a random key per process, whose pseudonyms do **not** link across restarts or
+  across replicas. Set one shared key on every replica to link a user's records; Bastion logs a start-up
+  warning while none is set.
 - **Status.** `bastion__status` shows, per upstream, `delegation: { mode, audience, lastViolation }`, where
   the last violation is a rule id and a time only.
 - **Config checks.** `delegation` needs `forwardHeaders`; `header` must be one of its keys; two upstreams
@@ -565,7 +567,8 @@ content is revealed.
 [signature mode](#signature-mode), or, in structural mode, only with `trustStructuralClaims: true`. Set
 that only when the upstream verifies the same token itself, so a forged claim that passes Bastion is still
 rejected upstream. A rule naming a `user` or `agent` for a structural-mode upstream is a config error
-otherwise, and a token that is present but untrusted refuses the call (`delegation:unverified`).
+otherwise, and a token that is present but untrusted refuses the call (`delegation:unverified`). While
+`trustStructuralClaims` is on, Bastion logs a start-up warning naming the upstreams it applies to.
 
 **Measured.** This family of checks was pre-registered as test cases in
 [mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench) (tag

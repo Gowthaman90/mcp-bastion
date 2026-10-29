@@ -13,7 +13,7 @@ import { Command } from "commander";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { auditKeygen, auditVerify } from "./audit-cli.js";
-import { loadConfig, defaultConfig } from "./config/index.js";
+import { loadConfig, defaultConfig, startupWarnings } from "./config/index.js";
 import { BASTION_VERSION, UpstreamManager } from "./core/index.js";
 import { logger } from "./observability/index.js";
 import {
@@ -84,6 +84,7 @@ async function run(opts: { config?: string; http?: string }): Promise<void> {
       "no --config provided: starting with no upstream servers, so only Bastion's control tools are exposed. Pass --config <path> to put Bastion in front of your MCP servers.",
     );
   }
+  for (const w of startupWarnings(config)) logger[w.level](w.message);
   // Resolve and check the client-facing transport BEFORE any upstream is spawned, so a refused
   // configuration (bad port, unauthenticated public bind, bad client tokens) leaves no child processes.
   const cliPort = opts.http !== undefined ? Number(opts.http) : undefined;

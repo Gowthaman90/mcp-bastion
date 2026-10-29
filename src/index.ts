@@ -9,7 +9,8 @@
  */
 
 // Configuration
-export { loadConfig, BastionConfigSchema } from "./config/index.js";
+export { loadConfig, BastionConfigSchema, startupWarnings } from "./config/index.js";
+export type { StartupWarning } from "./config/index.js";
 export type {
   BastionConfig,
   ServerConfig,

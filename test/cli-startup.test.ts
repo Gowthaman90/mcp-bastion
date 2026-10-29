@@ -11,14 +11,22 @@ const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const tsx = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
 
 /** Run the CLI with a config; resolve with its exit code and stderr. */
-function runCli(configPath: string): Promise<{ code: number | null; output: string }> {
+function runCli(
+  configPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve) => {
-    execFile(tsx, [cli, "--config", configPath], { timeout: 20_000 }, (err, stdout, stderr) => {
-      resolve({
-        code: err ? ((err as { code?: number }).code ?? 1) : 0,
-        output: `${stdout}${stderr}`,
-      });
-    });
+    execFile(
+      tsx,
+      [cli, "--config", configPath],
+      { timeout: 20_000, env },
+      (err, stdout, stderr) => {
+        resolve({
+          code: err ? ((err as { code?: number }).code ?? 1) : 0,
+          output: `${stdout}${stderr}`,
+        });
+      },
+    );
   });
 }
 
@@ -47,6 +55,36 @@ describe("CLI startup order", () => {
     expect(code).toBe(1);
     expect(output).toMatch(/Refusing to bind mcp-bastion HTTP to non-loopback host/);
     expect(existsSync(marker)).toBe(false);
+  }, 30_000);
+
+  it("prints the start-up warnings before anything else is checked", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bastion-cli-"));
+    const config = join(dir, "bastion.json");
+    writeFileSync(
+      config,
+      JSON.stringify({
+        servers: {
+          files: {
+            transport: "http",
+            url: "https://files.internal/mcp",
+            forwardHeaders: { "x-delegate": "x-delegate-files" },
+            delegation: { audience: "files" },
+          },
+        },
+        // Refused bind: the CLI exits before any upstream is contacted.
+        listen: { mode: "http", host: "0.0.0.0", port: 39872 },
+        authorization: { enabled: true, trustStructuralClaims: true },
+      }),
+    );
+    const env = { ...process.env };
+    delete env.MCP_BASTION_SUBJECT_KEY;
+    delete env.MCP_BASTION_AUDIT_KEY;
+
+    const { code, output } = await runCli(config, env);
+
+    expect(code).toBe(1);
+    expect(output).toMatch(/authorization\.trustStructuralClaims is on: for files/);
+    expect(output).toMatch(/do not link across restarts or replicas/);
   }, 30_000);
 });
 

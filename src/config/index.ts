@@ -4,6 +4,7 @@
  * @packageDocumentation
  */
 export { loadConfig, defaultConfig } from "./loader.js";
+export { startupWarnings, type StartupWarning } from "./warnings.js";
 export {
   BastionConfigSchema,
   ServerConfigSchema,
