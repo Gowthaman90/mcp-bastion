@@ -553,7 +553,10 @@ refused call never opens a connection carrying the caller's forwarded headers. C
 
 **Rolling it out.** Start under `enforcementProfile: "observe"`: nothing is refused, and each audit
 event carries an `authorization` record (`effect`, deciding `rule`, `violations` such as
-`agent:argument`) plus `wouldBlock: "blocked_authorization"` where enforcement would have refused. When
+`agent:argument`, and `rules`, the deciding rule per identity, e.g.
+`{ "client": "orchestrator-files", "user": "files-run" }`, so the record shows which grant admitted
+each identity) plus `wouldBlock: "blocked_authorization"` where enforcement would have refused. Rule ids
+appear in audit records, so keep personal data (user ids, e-mail addresses) out of them. When
 the log shows only refusals you intend, switch to `balanced`. Under `balanced` a refused call is answered
 `Blocked by mcp-bastion: this caller is not authorized to call "<tool>" (rule <id>).`; no other policy
 content is revealed.
@@ -613,9 +616,11 @@ refused by the security layer or by [authorization](#runtime-authorization):
 ```
 
 **Events.** Each event names the server, tool, decision (`allowed`, `blocked_rug_pull`,
-`blocked_authorization`, …), outcome, findings with their `kind`, the `authorization` and delegation
-records when present, a `runId`, and a mapping to **NIST AI RMF** functions and **OWASP LLM Top 10**
-categories. `bastion__compliance` returns aggregate totals.
+`blocked_authorization`, …), outcome, findings with their `kind`, the `authorization` record (with the
+deciding rule per identity) and the delegation record when present, a `runId`, and a mapping to
+**NIST AI RMF** functions and **OWASP LLM Top 10** categories. A call that passed the checks and then
+failed before reaching the tool (an on-demand connect refused, an upstream not connected) is recorded
+with `outcome: "error"`. `bastion__compliance` returns aggregate totals.
 
 **Each sink is its own security boundary.**
 

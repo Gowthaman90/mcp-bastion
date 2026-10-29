@@ -304,6 +304,19 @@ describe("authorization dev fixtures (mcp-defense-bench, pre-registered)", () =>
       const allowed = events.filter((e) => e.decision === "allowed");
       expect(allowed).toHaveLength(1);
       expect(allowed[0]).toMatchObject({ authorization: { effect: "allow", violations: [] } });
+
+      // Per-identity rules: one key per carried identity; every allowed identity names its grant.
+      type Record_ = { identities: string[]; violations: string[]; rules: Record<string, unknown> };
+      const allowRec = allowed[0].authorization as Record_;
+      expect(Object.keys(allowRec.rules)).toEqual(allowRec.identities);
+      expect(Object.values(allowRec.rules).every((r) => typeof r === "string")).toBe(true);
+      const denyRec = blocked[0].authorization as Record_;
+      expect(Object.keys(denyRec.rules)).toEqual(denyRec.identities);
+      for (const v of denyRec.violations) {
+        const [kind, reason] = v.split(":");
+        if (reason === "denied") expect(denyRec.rules[kind]).toEqual(expect.any(String));
+        else expect(denyRec.rules[kind]).toBeNull();
+      }
     },
   );
 });

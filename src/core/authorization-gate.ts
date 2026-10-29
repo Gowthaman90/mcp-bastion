@@ -138,6 +138,7 @@ export class AuthorizationGate {
         client,
         identities: Object.keys(resolved.identities),
         violations: decision.violations,
+        rules: Object.fromEntries(decision.identities.map((v) => [v.kind, v.rule])),
       },
     };
   }

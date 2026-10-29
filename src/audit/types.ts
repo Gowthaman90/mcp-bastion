@@ -77,6 +77,12 @@ export interface AuditAuthorizationRecord {
   identities: string[];
   /** `<kind>:<reason>` per refused identity (`denied`, `no-grant`, `argument`, `unverified`). */
   violations: string[];
+  /**
+   * The deciding rule per evaluated identity, e.g. `{ client: "orchestrator-files", user: "files-run" }`:
+   * its matching deny, else the allow that admitted it; `null` when no rule decided (no grant, or
+   * allowed by `default: "allow"`). Only identities the call carried have a key. Rule ids only.
+   */
+  rules?: Partial<Record<"client" | "user" | "agent", string | null>>;
 }
 
 /** One finding as recorded in an audit event. */

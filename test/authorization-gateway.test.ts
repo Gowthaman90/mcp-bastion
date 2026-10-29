@@ -213,6 +213,7 @@ describe("named clients over HTTP (listen.clients)", () => {
         client: "ops",
         identities: ["client"],
         violations: ["client:denied"],
+        rules: { client: "no-deletes" },
       },
       frameworks: {
         nistAiRmf: expect.arrayContaining(["MANAGE"]),
@@ -408,6 +409,7 @@ describe("control tools", () => {
         rule: "ops-control",
         client: "ops",
         identities: ["client"],
+        rules: { client: "ops-control" },
       },
       hash: expect.any(String), // in the tamper-evident chain
     });
@@ -584,6 +586,14 @@ describe("user and agent identities from delegate tokens", () => {
       authorization: { identities: ["client", "user", "agent"], rule: "host" },
       delegation: { verified: "signature" },
     });
+    // Which grant admitted (or failed) each identity; `rule` stays the client's.
+    const rulesOf = (e: Record<string, unknown>) => (e.authorization as { rules: unknown }).rules;
+    expect(events.map(rulesOf)).toEqual([
+      { client: "host", user: "alice-files", agent: "reader-agent" },
+      { client: "host", user: "alice-files", agent: null },
+      { client: "host", user: "alice-files", agent: null },
+      { client: "host", user: null, agent: "reader-agent" },
+    ]);
     expect(JSON.stringify(events)).not.toContain("user:alice"); // the subject is pseudonymised
   });
 
@@ -615,7 +625,10 @@ describe("user and agent identities from delegate tokens", () => {
     const events = await g.audit();
     expect(events[0]).toMatchObject({
       decision: "blocked_authorization",
-      authorization: { violations: ["user:no-grant", "agent:no-grant", "delegation:unverified"] },
+      authorization: {
+        violations: ["user:no-grant", "agent:no-grant", "delegation:unverified"],
+        rules: { client: "rule-1", user: null, agent: null },
+      },
     });
   });
 
