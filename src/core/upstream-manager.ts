@@ -391,7 +391,14 @@ export class UpstreamManager {
         );
       }
       const message = upstream.noteFailure(err);
-      logger.error({ tool: name, err: message }, "tool call failed");
+      if (upstream.isCallerAuthFailure(err)) {
+        logger.warn(
+          { tool: name, server: route.server, status: 401 },
+          "upstream refused the caller's forwarded credentials",
+        );
+      } else {
+        logger.error({ tool: name, err: message }, "tool call failed");
+      }
       return textResult(this.failureText(upstream, name, err), true);
     }
   }

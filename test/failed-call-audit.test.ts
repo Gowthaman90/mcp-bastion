@@ -3,7 +3,7 @@
  * on-demand connect (e.g. HTTP 401 for the caller's forwarded credentials), an upstream that is not
  * connected, and an MRTR retry whose `requestState` fails custody.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { parseJsonl, verifyAuditLog } from "../src/audit/index.js";
 import { BastionConfigSchema } from "../src/config/index.js";
 import { UpstreamManager } from "../src/core/index.js";
+import { logger } from "../src/observability/index.js";
 import { resolveListenClients, startHttpServer } from "../src/proxy/index.js";
 // @ts-expect-error -- untyped .mjs test helper
 import { startIdentityHttpServer } from "./helpers/identity-http-server.mjs";
@@ -31,6 +32,7 @@ const textOf = (res: unknown) =>
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!().catch(() => undefined);
+  vi.restoreAllMocks();
 });
 
 async function auditDir(): Promise<string> {
@@ -252,5 +254,65 @@ describe("other authorized calls that end without reaching the upstream are audi
       decision: "blocked_request_state",
       outcome: "blocked",
     });
+  });
+});
+
+describe("log level matches the cause of an upstream 401", () => {
+  /** Messages logged at error and warn level while `run` runs. */
+  async function logged(run: () => Promise<unknown>) {
+    const error = vi.spyOn(logger, "error");
+    const warn = vi.spyOn(logger, "warn");
+    await run();
+    const msgs = (spy: typeof error) =>
+      spy.mock.calls.map((c) => (typeof c[0] === "string" ? c[0] : String(c[1] ?? "")));
+    return { errors: msgs(error), warnings: msgs(warn) };
+  }
+
+  it("one caller's rejected credentials at first contact: one warning, no error, no disconnect", async () => {
+    const g = await gateway();
+    const bad = await caller(g.listener.url, "invalid-log-1");
+    const { errors, warnings } = await logged(() =>
+      bad.callTool({ name: "files__whoami", arguments: {} }),
+    );
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual(["upstream refused the caller's forwarded credentials"]);
+    expect(g.mgr.status()[0].state).toBe("idle");
+  });
+
+  it("one caller's rejected credentials on a connected upstream: a warning, no error", async () => {
+    const g = await gateway();
+    const good = await caller(g.listener.url, "user-c-token");
+    await good.callTool({ name: "files__whoami", arguments: {} });
+    const bad = await caller(g.listener.url, "invalid-log-2");
+    const { errors, warnings } = await logged(() =>
+      bad.callTool({ name: "files__whoami", arguments: {} }),
+    );
+    expect(errors).toEqual([]);
+    expect(warnings).toContain("upstream refused the caller's forwarded credentials");
+    expect(g.mgr.status()[0].state).toBe("connected");
+  });
+
+  it("a 401 to static credentials fails every caller and stays an error", async () => {
+    const upstream = await startIdentityHttpServer();
+    cleanups.push(() => upstream.close());
+    const mgr = new UpstreamManager(
+      BastionConfigSchema.parse({
+        servers: {
+          files: {
+            transport: "http",
+            url: upstream.url,
+            protocol: "legacy",
+            headers: { "x-cso-identity": "invalid-static-credential" },
+          },
+        },
+        reconnect: { auto: false },
+        healthCheck: { enabled: false },
+      }),
+    );
+    cleanups.push(() => mgr.closeAll());
+    const { errors, warnings } = await logged(() => mgr.connectAll());
+    expect(errors).toContain("upstream connect failed");
+    expect(warnings).not.toContain("upstream refused the caller's forwarded credentials");
+    expect(warnings).not.toContain("upstream disconnected unexpectedly");
   });
 });

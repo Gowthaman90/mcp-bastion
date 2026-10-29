@@ -105,6 +105,8 @@ export class UpstreamConnection {
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   /** When `true`, a close was requested by us and must NOT trigger auto-reconnect. */
   private closedByRequest = false;
+  /** While a connect attempt runs, its own catch handles failure: transport close/error stay quiet. */
+  private establishing = false;
   /** Caching hints the upstream attached to its last `tools/list` (MCP 2026-07-28), as sent. */
   private rawCacheHints: CacheHints = {};
   /** The same hints after policy: TTL clamped, scope narrowed. `undefined` until a list carried hints. */
@@ -218,6 +220,15 @@ export class UpstreamConnection {
       return `authentication failed: "${this.name}" answered HTTP 401 Unauthorized to the credentials it was sent`;
     }
     return this.scrub((err as Error)?.message ?? String(err));
+  }
+
+  /**
+   * Whether `err` is this upstream refusing the current caller's forwarded credentials (HTTP 401 on
+   * an upstream with `forwardHeaders`). That is one caller's problem, not an outage, so it is logged
+   * as a warning; a 401 to static credentials fails every caller and stays an error.
+   */
+  isCallerAuthFailure(err: unknown): boolean {
+    return this.forward.length > 0 && isAuthFailure(err);
   }
 
   /** Record a failure from a tool call as this upstream's last error; returns the safe message. */
@@ -350,6 +361,16 @@ export class UpstreamConnection {
 
   /** One connect attempt: transport, handshake, first `tools/list`. */
   private async establish(): Promise<void> {
+    this.establishing = true;
+    try {
+      await this.attemptConnect();
+    } finally {
+      this.establishing = false;
+    }
+  }
+
+  /** The body of {@link establish}. */
+  private async attemptConnect(): Promise<void> {
     this.closedByRequest = false;
     this.connectionState = this.reconnectAttempts > 0 ? "reconnecting" : "connecting";
 
@@ -372,7 +393,13 @@ export class UpstreamConnection {
     transport.onclose = () => this.handleUnexpectedClose();
     transport.onerror = (err: Error) => {
       this.lastErrorMessage = this.errorMessage(err);
-      logger.warn({ server: this.name, err: this.lastErrorMessage }, "upstream transport error");
+      // During a connect, or for one caller's rejected credentials, the failure is logged once where
+      // it is handled (the connect's catch, or the tool call); here it would only repeat it.
+      const repeat = this.establishing || this.isCallerAuthFailure(err);
+      logger[repeat ? "debug" : "warn"](
+        { server: this.name, err: this.lastErrorMessage },
+        "upstream transport error",
+      );
     };
 
     // SDK 2.0 client. Bastion is a gateway, so it never auto-fulfils an `input_required` round —
@@ -437,7 +464,14 @@ export class UpstreamConnection {
       this.lastErrorMessage = this.errorMessage(err);
       this.client = null;
       this.transport = null;
-      logger.error({ server: this.name, err: this.lastErrorMessage }, "upstream connect failed");
+      if (this.isCallerAuthFailure(err)) {
+        logger.warn(
+          { server: this.name, status: 401 },
+          "upstream refused the caller's forwarded credentials",
+        );
+      } else {
+        logger.error({ server: this.name, err: this.lastErrorMessage }, "upstream connect failed");
+      }
       if (this.connectMode === "onDemand") {
         // No reconnect timer: the next request that needs this upstream connects it, with its own
         // identity. A 401 in particular must not turn into a retry storm.
@@ -596,7 +630,8 @@ export class UpstreamConnection {
 
   /** Transition to `disconnected` on an unexpected transport close and schedule recovery. */
   private handleUnexpectedClose(): void {
-    if (this.closedByRequest) return;
+    // A failed connect closes its own transport; the connect's catch does the state transition.
+    if (this.closedByRequest || this.establishing) return;
     // Ignore spurious closes once we're already tearing down / retrying.
     if (
       this.connectionState === "disconnected" ||
