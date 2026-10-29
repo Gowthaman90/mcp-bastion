@@ -61,6 +61,12 @@ export function frameworksFor(
     owasp.add("LLM06: Excessive Agency");
   }
 
+  // A continuation presented by someone other than its holder, or altered or replayed.
+  if (decision === "blocked_request_state") {
+    nist.add("MANAGE");
+    owasp.add("LLM06: Excessive Agency");
+  }
+
   // A caller used a tool, or an argument value, outside its grant: per-caller least privilege.
   if (decision === "blocked_authorization") {
     nist.add("MANAGE");

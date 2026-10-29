@@ -267,9 +267,12 @@ export class UpstreamManager {
       authz = this.authorization.check(target.name, name, callArgs, client);
       const denied = this.authorizationPreflight(target.name, name, callArgs, principal, authz);
       if (denied) return denied;
+      const started = Date.now();
       try {
         await target.prepareForRequest();
       } catch (err) {
+        // The call was authorized but never reached the tool: record it like a failed upstream call.
+        this.recordFailedCall(target.name, name, callArgs, principal, authz, err, started);
         return textResult(this.failureText(target, name, err), true);
       }
     }
@@ -298,6 +301,12 @@ export class UpstreamManager {
     const upstream = this.upstreams.get(route.server);
     if (!upstream || !upstream.isConnected()) {
       const state = upstream?.state ?? "unknown";
+      this.audit?.recordFailure(
+        this.callContext(route.server, name, callArgs, principal, authz, {
+          toolName: route.originalName,
+        }),
+        0,
+      );
       return textResult(
         `Upstream server "${route.server}" is currently ${state}, so the tool "${route.originalName}" ` +
           `is temporarily unavailable. Call "${controlToolName(ControlAction.Reconnect, this.separator)}" with ` +
@@ -324,6 +333,13 @@ export class UpstreamManager {
           { tool: name, principal, rules },
           "rejected MRTR retry: requestState custody check failed",
         );
+        this.audit?.recordPreflight({
+          ...this.callContext(route.server, name, callArgs, principal, authz, {
+            toolName: route.originalName,
+            inputResponses: opts.inputResponses,
+          }),
+          securityDecision: "blocked_request_state",
+        });
         return textResult(
           `Blocked by mcp-bastion: the requestState presented for "${name}" failed verification (${rules}). ` +
             `A continuation must be echoed unchanged, by the same principal, before it expires.`,
@@ -333,23 +349,11 @@ export class UpstreamManager {
       upstreamState = opened.upstreamState === "" ? undefined : opened.upstreamState;
     }
 
-    const ctx: ToolCallContext = {
-      server: route.server,
+    const ctx = this.callContext(route.server, name, callArgs, principal, authz, {
       toolName: route.originalName,
-      namespacedName: name,
-      args: callArgs,
-      principal,
       inputResponses: opts.inputResponses,
       requestState: upstreamState,
-    };
-    const forwarded = upstream.presentForwardedHeaders();
-    if (forwarded.length > 0) ctx.forwardedHeaders = forwarded;
-    const delegated = this.delegation.check(route.server);
-    if (delegated?.record) ctx.delegation = delegated.record;
-    // Warn-only delegation findings that `balanced` would have blocked (shadow mode).
-    if (delegated?.wouldBlock) ctx.wouldBlock = "blocked_delegation";
-    if (authz) ctx.authorization = authz.record;
-    if (authz?.wouldBlock) ctx.wouldBlock ??= "blocked_authorization";
+    });
     try {
       // Security interceptors run first; the terminal step is the real upstream call.
       const outcome = await runPipeline(
@@ -390,6 +394,64 @@ export class UpstreamManager {
       logger.error({ tool: name, err: message }, "tool call failed");
       return textResult(this.failureText(upstream, name, err), true);
     }
+  }
+
+  /**
+   * The context of a `tools/call` of `name` on `server`, as the pipeline and the audit see it: the
+   * forwarded header names (never values), the delegation record and the authorization record, each
+   * with the `wouldBlock` a `warn` action left. One builder, so a call that fails before the pipeline
+   * is recorded with the same fields as one that ran.
+   */
+  private callContext(
+    server: string,
+    name: string,
+    args: Record<string, unknown>,
+    principal: string,
+    authz: AuthorizationCheck | undefined,
+    extra: Partial<Pick<ToolCallContext, "toolName" | "inputResponses" | "requestState">> = {},
+  ): ToolCallContext {
+    const prefix = server + this.separator;
+    const ctx: ToolCallContext = {
+      server,
+      // Before the first tools/list (an idle on-demand upstream) the name is known by prefix only.
+      toolName: name.startsWith(prefix) ? name.slice(prefix.length) : name,
+      namespacedName: name,
+      args,
+      principal,
+      ...extra,
+    };
+    const forwarded = this.upstreams.get(server)?.presentForwardedHeaders() ?? [];
+    if (forwarded.length > 0) ctx.forwardedHeaders = forwarded;
+    const delegated = this.delegation.check(server);
+    if (delegated?.record) ctx.delegation = delegated.record;
+    // Warn-only delegation findings that `balanced` would have blocked (shadow mode).
+    if (delegated?.wouldBlock) ctx.wouldBlock = "blocked_delegation";
+    if (authz) ctx.authorization = authz.record;
+    if (authz?.wouldBlock) ctx.wouldBlock ??= "blocked_authorization";
+    return ctx;
+  }
+
+  /**
+   * Audit an authorized call that failed before the pipeline ran (the on-demand connect or re-list
+   * it needed threw). A delegate token the transport backstop refused is a delegation block, not an
+   * error; anything else is recorded as the interceptor records a thrown upstream error.
+   */
+  private recordFailedCall(
+    server: string,
+    name: string,
+    args: Record<string, unknown>,
+    principal: string,
+    authz: AuthorizationCheck | undefined,
+    err: unknown,
+    started: number,
+  ): void {
+    if (!this.audit) return;
+    const ctx = this.callContext(server, name, args, principal, authz);
+    if (err instanceof DelegationBlockedError) {
+      this.audit.recordPreflight({ ...ctx, securityDecision: "blocked_delegation" });
+      return;
+    }
+    this.audit.recordFailure(ctx, Date.now() - started);
   }
 
   /**

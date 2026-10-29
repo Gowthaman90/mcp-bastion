@@ -132,6 +132,15 @@ export class AuditEngine {
     this.record(ctx, randomUUID(), 0, undefined, false);
   }
 
+  /**
+   * Record a call that passed the pre-flight checks and then failed outside the pipeline (e.g. the
+   * on-demand connect it needed was refused). Recorded as the interceptor records a thrown upstream
+   * error: `decision` from `ctx.securityDecision` (else `allowed`), `outcome: "error"`.
+   */
+  recordFailure(ctx: ToolCallContext, durationMs: number): void {
+    this.record(ctx, randomUUID(), durationMs, undefined, true);
+  }
+
   /** Durable, monotonic compliance report (backs `bastion__compliance`). */
   complianceReport(): ComplianceReport {
     return {
