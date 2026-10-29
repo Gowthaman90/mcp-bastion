@@ -6,6 +6,39 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+Fixes from an end-to-end test of 1.4.0 behind a multi-agent deployment. No policy or decision changes;
+audit additions are additive and `AUDIT_SCHEMA_VERSION` stays `1`.
+
+### Fixed
+
+- **A call that failed while connecting an on-demand upstream wrote no audit event.** A `tools/call`
+  that passed authorization and then failed during first contact (for example an HTTP 401 for the
+  caller's forwarded credentials) now writes one event, with the same fields as the same failure on a
+  connected upstream (`decision: "allowed"`, `outcome: "error"`, plus `authorization`, `delegation` and
+  `forwardedHeaders` when present); only `definitionHash` and definition findings are absent, since no
+  tool list exists yet. A call to an upstream that is not connected is recorded the same way, and a
+  continuation whose `requestState` fails custody is now recorded as `blocked_request_state` (mapped to
+  NIST AI RMF MANAGE and OWASP LLM06).
+- **Log level matches the cause.** An upstream refusing one caller's forwarded credentials logs one
+  warning ("upstream refused the caller's forwarded credentials") instead of an error, and a failed
+  connect no longer also logs "upstream disconnected unexpectedly" and a transport error. A 401 to static
+  credentials and non-authentication failures still log errors.
+
+### Added
+
+- **`authorization.rules` in audit records:** the deciding rule per evaluated identity, for example
+  `{ "client": "orchestrator-files", "user": "files-run" }`, so the record shows which grant admitted each
+  identity. `null` means no rule decided; an identity the call did not carry has no key. `rule` is
+  unchanged. Rule ids only, never subjects or claim values.
+- **Start-up warnings** (`startupWarnings(config, env)`, also exported): when
+  `authorization.trustStructuralClaims` is on, naming the upstreams whose delegate tokens Bastion takes
+  without a signature check; and when no subject-pseudonym key is set, so pseudonyms would not link
+  across restarts or replicas.
+
+### Documentation
+
+- Subject pseudonyms and replicas; keep personal data out of rule ids.
+
 ## [1.4.0] - 2026-10-27
 
 Runtime authorization: who may call which tool, with which arguments, decided before any upstream
