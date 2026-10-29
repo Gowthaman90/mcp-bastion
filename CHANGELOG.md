@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-29
+
 Fixes from an end-to-end test of 1.4.0 behind a multi-agent deployment. No policy or decision changes;
 audit additions are additive and `AUDIT_SCHEMA_VERSION` stays `1`.
 
@@ -680,7 +682,8 @@ spanning three layers plus dual transports.
 - Strict TypeScript, layered architecture (`config` / `core` / `security` / `audit` / `proxy` /
   `observability` / `internal`), ESLint + Prettier, unit + end-to-end tests, and CI.
 
-[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.0...v1.4.1
 [0.6.1]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.4.0...v0.5.0

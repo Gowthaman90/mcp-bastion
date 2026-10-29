@@ -6,12 +6,12 @@
     "url": "https://github.com/Gowthaman90/mcp-bastion",
     "source": "github"
   },
-  "version": "1.4.0",
+  "version": "1.4.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "mcp-bastion",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "transport": {
         "type": "stdio"
       }
