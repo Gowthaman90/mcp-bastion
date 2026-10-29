@@ -38,6 +38,7 @@ audit additions are additive and `AUDIT_SCHEMA_VERSION` stays `1`.
 ### Documentation
 
 - Subject pseudonyms and replicas; keep personal data out of rule ids.
+- Example and test header and server names made generic.
 
 ## [1.4.0] - 2026-10-27
 

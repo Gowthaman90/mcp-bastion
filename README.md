@@ -325,12 +325,12 @@ upstream call has to carry that user's identity, not one fixed token. `forwardHe
 ```jsonc
 {
   "servers": {
-    "pfqa": {
+    "files": {
       "transport": "http",
       "url": "http://localhost:8011/mcp",
       "protocol": "legacy",
       "connect": "onDemand",
-      "forwardHeaders": { "x-cso-identity": "x-cso-delegate-pfqa" },
+      "forwardHeaders": { "x-user-identity": "x-delegate-files" },
     },
   },
   "listen": { "mode": "http" },
@@ -339,7 +339,7 @@ upstream call has to carry that user's identity, not one fixed token. `forwardHe
 
 The map reads _upstream header ← incoming header_. For every upstream request made while serving a
 downstream HTTP request (`initialize`, `tools/list`, `tools/call`, `ping`), Bastion copies the value of
-the incoming `x-cso-delegate-pfqa` header onto the upstream request as `x-cso-identity`.
+the incoming `x-delegate-files` header onto the upstream request as `x-user-identity`.
 
 **Bastion holds no credential in this mode. It only passes on what each request carries.**
 
@@ -354,10 +354,10 @@ the incoming `x-cso-delegate-pfqa` header onto the upstream request as `x-cso-id
 - **A forwarded header overrides a static `headers` entry** of the same name.
 - **Missing header.** By default (`onMissingForwardedHeader: "error"`) the upstream is not called. The
   caller gets a tool error such as
-  `pfqa: the request carried no x-cso-delegate-pfqa header, so the call was not forwarded.`
+  `files: the request carried no x-delegate-files header, so the call was not forwarded.`
   Use `"omit"` to call the upstream anyway and let it decide.
 - **On-demand connection.** With `connect: "onDemand"`, nothing is sent at start-up. The first request
-  that needs the upstream (`tools/list`, or a direct `tools/call` of `pfqa__…`) connects it with that
+  that needs the upstream (`tools/list`, or a direct `tools/call` of `files__…`) connects it with that
   request's headers. The tool list is then cached as usual. Health checks skip on-demand upstreams,
   which show as `idle` until first used. A failed connect returns to `idle` with no reconnect timer.
   `connect: "startup"` with `forwardHeaders` connects at boot with the static `headers` only, so use
@@ -366,7 +366,7 @@ the incoming `x-cso-delegate-pfqa` header onto the upstream request as `x-cso-id
   `bastion__status` (`lastError`), never as a crash or an unknown tool. One user's 401 does not tear down
   the connection other users share.
 - **Values are never recorded.** Logs, audit sinks and `bastion__status` never contain a forwarded
-  value. Audit events record only which headers were forwarded (`"forwardedHeaders": ["x-cso-identity"]`).
+  value. Audit events record only which headers were forwarded (`"forwardedHeaders": ["x-user-identity"]`).
 - **Pinning is shared.** Tool definitions are pinned on first sight and a change is blocked, whichever
   user's request saw it. Only the identity is per request.
 
@@ -385,16 +385,16 @@ key**:
 
 ```jsonc
 "servers": {
-  "pfqa": {
+  "files": {
     "transport": "http", "url": "http://localhost:8011/mcp", "protocol": "legacy", "connect": "onDemand",
-    "forwardHeaders": { "x-cso-identity": "x-cso-delegate-pfqa" },
+    "forwardHeaders": { "x-user-identity": "x-delegate-files" },
     "delegation": {
-      "audience": "pfqa",                 // required: what this upstream's tokens must carry in `aud`
-      "header": "x-cso-identity",         // forwardHeaders key carrying the JWT (default: the only one)
+      "audience": "files",                // required: what this upstream's tokens must carry in `aud`
+      "header": "x-user-identity",        // forwardHeaders key carrying the JWT (default: the only one)
       "verify": "structural",             // or "signature" (below)
       "maxLifetimeSeconds": 120,          // default 3600
       "clockSkewSeconds": 30,             // default 30
-      "allowedActors": ["master-quote-agent"],
+      "allowedActors": ["orchestrator-agent"],
       "requireActor": false,
       "maxChainDepth": 2
     }
@@ -456,7 +456,7 @@ can verify them against the issuer's **public** keys:
 
 ```jsonc
 "delegation": {
-  "audience": "pfqa",
+  "audience": "files",
   "verify": "signature",
   "issuer": "https://spire.example/identity",               // exact match on `iss`
   "algorithms": ["ES256", "EdDSA"],                          // allow-list; HS256/384/512 and none are rejected

@@ -128,7 +128,7 @@ export interface AuditEvent {
   args?: Record<string, unknown>;
   /**
    * Upstream header names forwarded from the caller's request (gateway mode), e.g.
-   * `["x-cso-identity"]`. Records that an identity was carried, never its value.
+   * `["x-user-identity"]`. Records that an identity was carried, never its value.
    */
   forwardedHeaders?: string[];
   /** Who acted for whom (keyless delegation checks), on calls to an upstream with `delegation`. */

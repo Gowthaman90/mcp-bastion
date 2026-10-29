@@ -40,45 +40,45 @@ function claims(aud: string, extra: Record<string, unknown> = {}): Record<string
     iat: NOW - 30,
     exp: NOW + 90,
     jti: "t-1",
-    act: { sub: "master-quote-agent" },
+    act: { sub: "orchestrator-agent" },
     ...extra,
   };
 }
 
-const PFQA = "https://pfqa.example/mcp";
-const PSQA = "https://psqa.example/mcp";
+const FILES = "https://files.example/mcp";
+const TICKETS = "https://tickets.example/mcp";
 const GATEWAY = "https://bastion.example/mcp";
 
 function policy(over: Partial<DelegationUpstreamPolicy> = {}, top: Partial<DelegationPolicy> = {}) {
   const base = {
     maxLifetimeSeconds: 300,
     clockSkewSeconds: 30,
-    allowedActors: ["master-quote-agent"],
+    allowedActors: ["orchestrator-agent"],
     maxChainDepth: 2,
   };
   return {
     upstreams: {
-      pfqa: { incomingHeader: "x-delegate-pfqa", audience: PFQA, ...base, ...over },
-      psqa: { incomingHeader: "x-delegate-psqa", audience: PSQA, ...base, ...over },
+      files: { incomingHeader: "x-delegate-files", audience: FILES, ...base, ...over },
+      tickets: { incomingHeader: "x-delegate-tickets", audience: TICKETS, ...base, ...over },
     },
     gatewayAudiences: [GATEWAY],
     ...top,
   } satisfies DelegationPolicy;
 }
 
-/** Rule ids found on pfqa's token (plus request-wide ones) for one pfqa token. */
+/** Rule ids found on files's token (plus request-wide ones) for one files token. */
 function rulesFor(token: string, over: Partial<DelegationUpstreamPolicy> = {}): string[] {
-  const r = checkDelegation(policy(over), { "x-delegate-pfqa": token }, NOW);
-  return [...(r.perUpstream.pfqa ?? []), ...r.request].map((f) => f.rule);
+  const r = checkDelegation(policy(over), { "x-delegate-files": token }, NOW);
+  return [...(r.perUpstream.files ?? []), ...r.request].map((f) => f.rule);
 }
 
 describe("checkDelegation: one positive and one matched negative per rule", () => {
   it("compliant token: no findings", () => {
-    expect(rulesFor(jwt(claims(PFQA)))).toEqual([]);
+    expect(rulesFor(jwt(claims(FILES)))).toEqual([]);
   });
 
   it("delegation-malformed", () => {
-    const good = jwt(claims(PFQA));
+    const good = jwt(claims(FILES));
     expect(rulesFor(good)).not.toContain("delegation-malformed");
     const [h, p, s] = good.split(".");
     const bad = [
@@ -92,68 +92,68 @@ describe("checkDelegation: one positive and one matched negative per rule", () =
       `${b64({ typ: "JWT" })}.${p}.${s}`, // no alg
       `${h}.${Buffer.from('{"sub":"a","sub":"b"}').toString("base64url")}.${s}`, // duplicate
       `${h}.${Buffer.from([0xff, 0xfe, 0x7b]).toString("base64url")}.${s}`, // not UTF-8
-      jwt(claims(PFQA, { exp: "tomorrow" })),
-      jwt(claims(PFQA, { aud: [PFQA, 7] })),
-      jwt(claims(PFQA, { act: "master-quote-agent" })),
-      jwt(claims(PFQA, { act: { sub: "a", act: { client_id: 3 } } })),
+      jwt(claims(FILES, { exp: "tomorrow" })),
+      jwt(claims(FILES, { aud: [FILES, 7] })),
+      jwt(claims(FILES, { act: "orchestrator-agent" })),
+      jwt(claims(FILES, { act: { sub: "a", act: { client_id: 3 } } })),
     ];
     for (const token of bad) expect(rulesFor(token), token).toEqual(["delegation-malformed"]);
   });
 
   it("delegation-audience-mismatch (lateral: a sibling's token)", () => {
-    expect(rulesFor(jwt(claims(PSQA)))).toEqual(["delegation-audience-mismatch"]);
-    expect(rulesFor(jwt(claims(PFQA)))).toEqual([]);
-    expect(rulesFor(jwt(claims([PSQA, PFQA] as unknown as string)))).toEqual([]);
-    expect(rulesFor(jwt(claims(PFQA.toUpperCase())))).toEqual(["delegation-audience-mismatch"]);
+    expect(rulesFor(jwt(claims(TICKETS)))).toEqual(["delegation-audience-mismatch"]);
+    expect(rulesFor(jwt(claims(FILES)))).toEqual([]);
+    expect(rulesFor(jwt(claims([TICKETS, FILES] as unknown as string)))).toEqual([]);
+    expect(rulesFor(jwt(claims(FILES.toUpperCase())))).toEqual(["delegation-audience-mismatch"]);
   });
 
   it("delegation-passthrough (no audience, or the gateway's own)", () => {
-    const { aud: _drop, ...noAud } = claims(PFQA);
+    const { aud: _drop, ...noAud } = claims(FILES);
     expect(rulesFor(jwt(noAud))).toEqual(["delegation-passthrough"]);
     expect(rulesFor(jwt(claims([] as unknown as string)))).toEqual(["delegation-passthrough"]);
     expect(rulesFor(jwt(claims(GATEWAY)))).toEqual(["delegation-passthrough"]);
-    expect(rulesFor(jwt(claims([PFQA, GATEWAY] as unknown as string)))).toEqual([
+    expect(rulesFor(jwt(claims([FILES, GATEWAY] as unknown as string)))).toEqual([
       "delegation-passthrough",
     ]);
-    expect(rulesFor(jwt(claims(PFQA)))).toEqual([]);
+    expect(rulesFor(jwt(claims(FILES)))).toEqual([]);
   });
 
   it("delegation-subject-mixing (across the request's tokens)", () => {
     const run = (b: Record<string, unknown>, top: Partial<DelegationPolicy> = {}) =>
       checkDelegation(
         policy({}, top),
-        { "x-delegate-pfqa": jwt(claims(PFQA)), "x-delegate-psqa": jwt(claims(PSQA, b)) },
+        { "x-delegate-files": jwt(claims(FILES)), "x-delegate-tickets": jwt(claims(TICKETS, b)) },
         NOW,
       );
     const mixed = run({ sub: "user:raj" });
     expect(mixed.request.map((f) => f.rule)).toEqual(["delegation-subject-mixing"]);
-    expect(mixed.perUpstream.pfqa).toEqual([]); // each token is fine on its own
+    expect(mixed.perUpstream.files).toEqual([]); // each token is fine on its own
     expect(run({ iss: "https://partner-idp.example" }).request).toHaveLength(1); // same sub, other iss
     expect(run({}).request).toEqual([]);
     expect(run({ sub: "user:raj" }, { oneUserPerRequest: false }).request).toEqual([]);
   });
 
   it("delegation-expired (with clock skew)", () => {
-    expect(rulesFor(jwt(claims(PFQA, { iat: NOW - 200, exp: NOW - 31 })))).toEqual([
+    expect(rulesFor(jwt(claims(FILES, { iat: NOW - 200, exp: NOW - 31 })))).toEqual([
       "delegation-expired",
     ]);
-    expect(rulesFor(jwt(claims(PFQA, { iat: NOW - 200, exp: NOW - 30 })))).toEqual([]);
+    expect(rulesFor(jwt(claims(FILES, { iat: NOW - 200, exp: NOW - 30 })))).toEqual([]);
   });
 
   it("delegation-not-yet-valid (with clock skew)", () => {
-    expect(rulesFor(jwt(claims(PFQA, { nbf: NOW + 31 })))).toEqual(["delegation-not-yet-valid"]);
-    expect(rulesFor(jwt(claims(PFQA, { nbf: NOW + 30 })))).toEqual([]);
+    expect(rulesFor(jwt(claims(FILES, { nbf: NOW + 31 })))).toEqual(["delegation-not-yet-valid"]);
+    expect(rulesFor(jwt(claims(FILES, { nbf: NOW + 30 })))).toEqual([]);
   });
 
   it("delegation-lifetime-excess (exp − iat over the limit, or no exp)", () => {
-    expect(rulesFor(jwt(claims(PFQA, { iat: NOW - 10, exp: NOW + 291 })))).toEqual([
+    expect(rulesFor(jwt(claims(FILES, { iat: NOW - 10, exp: NOW + 291 })))).toEqual([
       "delegation-lifetime-excess",
     ]);
-    expect(rulesFor(jwt(claims(PFQA, { iat: NOW - 10, exp: NOW + 290 })))).toEqual([]);
-    const { exp: _drop, ...noExp } = claims(PFQA);
+    expect(rulesFor(jwt(claims(FILES, { iat: NOW - 10, exp: NOW + 290 })))).toEqual([]);
+    const { exp: _drop, ...noExp } = claims(FILES);
     expect(rulesFor(jwt(noExp))).toEqual(["delegation-lifetime-excess"]);
     // Without iat, the time left bounds the lifetime from below.
-    const { iat: _i, ...noIat } = claims(PFQA);
+    const { iat: _i, ...noIat } = claims(FILES);
     expect(rulesFor(jwt({ ...noIat, exp: NOW + 30 * 86_400 }))).toEqual([
       "delegation-lifetime-excess",
     ]);
@@ -161,55 +161,55 @@ describe("checkDelegation: one positive and one matched negative per rule", () =
   });
 
   it("delegation-actor-not-allowed (current actor: act.sub, else act.client_id)", () => {
-    expect(rulesFor(jwt(claims(PFQA, { act: { sub: "bulk-export-agent" } })))).toEqual([
+    expect(rulesFor(jwt(claims(FILES, { act: { sub: "bulk-export-agent" } })))).toEqual([
       "delegation-actor-not-allowed",
     ]);
-    expect(rulesFor(jwt(claims(PFQA, { act: { client_id: "bulk-export-agent" } })))).toEqual([
+    expect(rulesFor(jwt(claims(FILES, { act: { client_id: "bulk-export-agent" } })))).toEqual([
       "delegation-actor-not-allowed",
     ]);
-    expect(rulesFor(jwt(claims(PFQA, { act: { client_id: "master-quote-agent" } })))).toEqual([]);
+    expect(rulesFor(jwt(claims(FILES, { act: { client_id: "orchestrator-agent" } })))).toEqual([]);
     // Only the current actor drives policy: an unlisted *prior* actor is fine.
     expect(
       rulesFor(
-        jwt(claims(PFQA, { act: { sub: "master-quote-agent", act: { sub: "front-end" } } })),
+        jwt(claims(FILES, { act: { sub: "orchestrator-agent", act: { sub: "front-end" } } })),
       ),
     ).toEqual([]);
   });
 
   it("delegation-actor-required", () => {
-    const { act: _drop, ...direct } = claims(PFQA);
+    const { act: _drop, ...direct } = claims(FILES);
     expect(rulesFor(jwt(direct), { requireActor: true })).toEqual(["delegation-actor-required"]);
-    expect(rulesFor(jwt(claims(PFQA)), { requireActor: true })).toEqual([]);
+    expect(rulesFor(jwt(claims(FILES)), { requireActor: true })).toEqual([]);
     expect(rulesFor(jwt(direct))).toEqual([]); // not required by default
   });
 
   it("delegation-chain-depth (medium)", () => {
-    const deep = { sub: "master-quote-agent", act: { sub: "planner", act: { sub: "helper" } } };
-    const ok = { sub: "master-quote-agent", act: { sub: "planner" } };
+    const deep = { sub: "orchestrator-agent", act: { sub: "planner", act: { sub: "helper" } } };
+    const ok = { sub: "orchestrator-agent", act: { sub: "planner" } };
     const r = checkDelegation(
       policy(),
-      { "x-delegate-pfqa": jwt(claims(PFQA, { act: deep })) },
+      { "x-delegate-files": jwt(claims(FILES, { act: deep })) },
       NOW,
     );
-    expect(r.perUpstream.pfqa).toEqual([
+    expect(r.perUpstream.files).toEqual([
       expect.objectContaining({ rule: "delegation-chain-depth", severity: "medium" }),
     ]);
-    expect(rulesFor(jwt(claims(PFQA, { act: ok })))).toEqual([]);
-    expect(rulesFor(jwt(claims(PFQA, { act: deep })), { maxChainDepth: undefined })).toEqual([]);
+    expect(rulesFor(jwt(claims(FILES, { act: ok })))).toEqual([]);
+    expect(rulesFor(jwt(claims(FILES, { act: deep })), { maxChainDepth: undefined })).toEqual([]);
   });
 
   it("delegation-chain-cycle (medium)", () => {
-    const cyclic = { sub: "master-quote-agent", act: { sub: "master-quote-agent" } };
+    const cyclic = { sub: "orchestrator-agent", act: { sub: "orchestrator-agent" } };
     const r = checkDelegation(
       policy(),
-      { "x-delegate-pfqa": jwt(claims(PFQA, { act: cyclic })) },
+      { "x-delegate-files": jwt(claims(FILES, { act: cyclic })) },
       NOW,
     );
-    expect(r.perUpstream.pfqa).toEqual([
+    expect(r.perUpstream.files).toEqual([
       expect.objectContaining({ rule: "delegation-chain-cycle", severity: "medium" }),
     ]);
     expect(
-      rulesFor(jwt(claims(PFQA, { act: { sub: "master-quote-agent", act: { sub: "planner" } } }))),
+      rulesFor(jwt(claims(FILES, { act: { sub: "orchestrator-agent", act: { sub: "planner" } } }))),
     ).toEqual([]);
     expect([...DELEGATION_CHAIN_RULES].sort()).toEqual([
       "delegation-chain-cycle",
@@ -220,42 +220,42 @@ describe("checkDelegation: one positive and one matched negative per rule", () =
 
 describe("checkDelegation: request handling and privacy", () => {
   it("checks only carried tokens and returns claims for the audit record", () => {
-    const r = checkDelegation(policy(), new Map([["x-delegate-pfqa", jwt(claims(PFQA))]]), NOW);
-    expect(Object.keys(r.perUpstream)).toEqual(["pfqa"]);
-    expect(r.tokens.pfqa).toEqual({
+    const r = checkDelegation(policy(), new Map([["x-delegate-files", jwt(claims(FILES))]]), NOW);
+    expect(Object.keys(r.perUpstream)).toEqual(["files"]);
+    expect(r.tokens.files).toEqual({
       issuer: "https://idp.example",
       subject: "user:priya",
       tokenId: "t-1",
       expiresAt: NOW + 90,
-      actors: ["master-quote-agent"],
+      actors: ["orchestrator-agent"],
       verified: "structural",
     });
   });
 
   it("finding details never contain a token or a claim value", () => {
     const token = jwt(
-      claims(PSQA, {
+      claims(TICKETS, {
         sub: "user:secret-sub",
         iat: NOW - 999,
         exp: NOW - 500,
         act: { sub: "x-bot" },
       }),
     );
-    const other = jwt(claims(PSQA, { sub: "user:other-sub" }));
+    const other = jwt(claims(TICKETS, { sub: "user:other-sub" }));
     const r = checkDelegation(
       policy(),
-      { "x-delegate-pfqa": token, "x-delegate-psqa": other },
+      { "x-delegate-files": token, "x-delegate-tickets": other },
       NOW,
     );
     const text = JSON.stringify([r.perUpstream, r.request]);
-    expect(r.perUpstream.pfqa.length).toBeGreaterThan(2);
-    for (const secret of [token, other, "user:secret-sub", "user:other-sub", "x-bot", PSQA]) {
+    expect(r.perUpstream.files.length).toBeGreaterThan(2);
+    for (const secret of [token, other, "user:secret-sub", "user:other-sub", "x-bot", TICKETS]) {
       expect(text).not.toContain(secret);
     }
   });
 
   it("accepts a Bearer scheme prefix and an empty signature segment, nothing looser", () => {
-    const token = jwt(claims(PFQA));
+    const token = jwt(claims(FILES));
     expect(decodeJwsCompact(`Bearer ${token}`)?.payload.sub).toBe("user:priya");
     expect(decodeJwsCompact(`Bearer  ${token}`)).toBeUndefined();
     const [h, p] = token.split(".");
@@ -289,7 +289,7 @@ describe("delegation configuration", () => {
   const http = (delegation: unknown, extra: Record<string, unknown> = {}) => ({
     transport: "http",
     url: "http://localhost:8011/mcp",
-    forwardHeaders: { "x-cso-identity": "x-cso-delegate-pfqa" },
+    forwardHeaders: { "x-user-identity": "x-delegate-files" },
     delegation,
     ...extra,
   });
@@ -299,12 +299,12 @@ describe("delegation configuration", () => {
     r.success ? [] : r.error.issues.map((i) => i.message);
 
   it("applies defaults", () => {
-    const r = parse({ pfqa: http({ audience: "pfqa" }) });
+    const r = parse({ files: http({ audience: "files" }) });
     expect(r.success).toBe(true);
     const cfg = r.data!;
-    const server = cfg.servers.pfqa;
+    const server = cfg.servers.files;
     expect(server.transport === "http" && server.delegation).toEqual({
-      audience: "pfqa",
+      audience: "files",
       verify: "structural",
       maxLifetimeSeconds: 3600,
       clockSkewSeconds: 30,
@@ -318,29 +318,29 @@ describe("delegation configuration", () => {
   });
 
   it("requires an audience", () => {
-    expect(parse({ pfqa: http({}) }).success).toBe(false);
+    expect(parse({ files: http({}) }).success).toBe(false);
   });
 
   it("requires forwardHeaders", () => {
-    const r = parse({ pfqa: http({ audience: "pfqa" }, { forwardHeaders: undefined }) });
+    const r = parse({ files: http({ audience: "files" }, { forwardHeaders: undefined }) });
     expect(messages(r).join()).toMatch(/delegation needs forwardHeaders/);
   });
 
   it("requires header to be a forwardHeaders key, and to be named when there are several", () => {
-    expect(messages(parse({ pfqa: http({ audience: "pfqa", header: "x-other" }) })).join()).toMatch(
-      /must be a forwardHeaders key/,
-    );
-    expect(parse({ pfqa: http({ audience: "pfqa", header: "X-CSO-Identity" }) }).success).toBe(
+    expect(
+      messages(parse({ files: http({ audience: "files", header: "x-other" }) })).join(),
+    ).toMatch(/must be a forwardHeaders key/);
+    expect(parse({ files: http({ audience: "files", header: "X-User-Identity" }) }).success).toBe(
       true,
     );
-    const two = { "x-cso-identity": "x-a", "x-trace": "x-b" };
+    const two = { "x-user-identity": "x-a", "x-trace": "x-b" };
     expect(
-      messages(parse({ pfqa: http({ audience: "pfqa" }, { forwardHeaders: two }) })).join(),
+      messages(parse({ files: http({ audience: "files" }, { forwardHeaders: two }) })).join(),
     ).toMatch(/delegation.header is required/);
   });
 
   it('verify: "signature" needs issuer, algorithms and one key source', () => {
-    const r = parse({ pfqa: http({ audience: "pfqa", verify: "signature" }) });
+    const r = parse({ files: http({ audience: "files", verify: "signature" }) });
     expect(messages(r)).toEqual([
       'verify "signature" needs issuer',
       'verify "signature" needs a non-empty algorithms list',
@@ -349,17 +349,17 @@ describe("delegation configuration", () => {
   });
 
   it("rejects duplicate audiences across upstreams and an audience that is the gateway's", () => {
-    const psqa = http(
-      { audience: "pfqa" },
-      { forwardHeaders: { "x-cso-identity": "x-cso-delegate-psqa" } },
+    const tickets = http(
+      { audience: "files" },
+      { forwardHeaders: { "x-user-identity": "x-delegate-tickets" } },
     );
-    expect(messages(parse({ pfqa: http({ audience: "pfqa" }), psqa })).join()).toMatch(
-      /already used by "pfqa"/,
+    expect(messages(parse({ files: http({ audience: "files" }), tickets })).join()).toMatch(
+      /already used by "files"/,
     );
     expect(
       messages(
         parse(
-          { pfqa: http({ audience: "mcp-bastion" }) },
+          { files: http({ audience: "mcp-bastion" }) },
           { delegation: { gatewayAudiences: ["mcp-bastion"] } },
         ),
       ).join(),
@@ -367,8 +367,8 @@ describe("delegation configuration", () => {
   });
 
   it("rejects unknown keys (a typo must not silently drop a check) and stdio upstreams", () => {
-    expect(parse({ pfqa: http({ audience: "pfqa", maxChainDeph: 2 }) }).success).toBe(false);
-    expect(parse({ local: { command: "node", delegation: { audience: "pfqa" } } }).success).toBe(
+    expect(parse({ files: http({ audience: "files", maxChainDeph: 2 }) }).success).toBe(false);
+    expect(parse({ local: { command: "node", delegation: { audience: "files" } } }).success).toBe(
       false,
     );
   });

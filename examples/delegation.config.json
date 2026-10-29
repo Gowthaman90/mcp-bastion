@@ -1,52 +1,52 @@
 {
   "servers": {
-    "pfqa": {
+    "files": {
       "transport": "http",
       "url": "http://localhost:8011/mcp",
       "protocol": "legacy",
       "connect": "onDemand",
       "forwardHeaders": {
-        "x-cso-identity": "x-cso-delegate-pfqa"
+        "x-user-identity": "x-delegate-files"
       },
       "delegation": {
-        "audience": "pfqa",
+        "audience": "files",
         "maxLifetimeSeconds": 120,
-        "allowedActors": ["master-quote-agent"],
+        "allowedActors": ["orchestrator-agent"],
         "maxChainDepth": 2
       }
     },
-    "psqa": {
+    "tickets": {
       "transport": "http",
       "url": "http://localhost:8012/mcp",
       "protocol": "legacy",
       "connect": "onDemand",
       "forwardHeaders": {
-        "x-cso-identity": "x-cso-delegate-psqa"
+        "x-user-identity": "x-delegate-tickets"
       },
       "delegation": {
-        "audience": "psqa",
+        "audience": "tickets",
         "maxLifetimeSeconds": 120,
-        "allowedActors": ["master-quote-agent"],
+        "allowedActors": ["orchestrator-agent"],
         "maxChainDepth": 2
       }
     },
-    "pkqa": {
-      "_comment": "Signature mode: Bastion verifies this sub-agent's delegate tokens against the issuer's public keys (still keyless). Needs ES256/EdDSA tokens; HS256 tokens can only be checked structurally, as pfqa and psqa are. Use \"jwks\": { \"keys\": [...] } instead of jwksUrl to pin the public keys inline.",
+    "billing": {
+      "_comment": "Signature mode: Bastion verifies this sub-agent's delegate tokens against the issuer's public keys (still keyless). Needs ES256/EdDSA tokens; HS256 tokens can only be checked structurally, as files and tickets are. Use \"jwks\": { \"keys\": [...] } instead of jwksUrl to pin the public keys inline.",
       "transport": "http",
       "url": "http://localhost:8013/mcp",
       "protocol": "legacy",
       "connect": "onDemand",
       "forwardHeaders": {
-        "x-cso-identity": "x-cso-delegate-pkqa"
+        "x-user-identity": "x-delegate-billing"
       },
       "delegation": {
-        "audience": "pkqa",
+        "audience": "billing",
         "verify": "signature",
         "issuer": "https://spire.example/identity",
         "algorithms": ["ES256", "EdDSA"],
         "jwksUrl": "https://spire.example/.well-known/jwks.json",
         "maxLifetimeSeconds": 120,
-        "allowedActors": ["master-quote-agent"],
+        "allowedActors": ["orchestrator-agent"],
         "maxChainDepth": 2
       }
     }

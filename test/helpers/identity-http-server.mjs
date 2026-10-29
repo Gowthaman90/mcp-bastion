@@ -2,7 +2,7 @@
 // shaped like a typical stateless sub-agent server: one JSON-RPC POST in, one JSON answer out, GET answers 405,
 // protocol 2025-06-18 / 2025-03-26.
 //
-// - A request without `x-cso-identity`, or with one starting "invalid", gets HTTP 401.
+// - A request without `x-user-identity`, or with one starting "invalid", gets HTTP 401.
 // - Tool `whoami` answers with the identity it received (after a small random delay, so concurrent
 //   calls interleave).
 // - Every request is recorded (method, identity, all header names) for the test to inspect.
@@ -26,7 +26,9 @@ export async function startIdentityHttpServer(opts = {}) {
 
   async function handle(req, res) {
     const identity =
-      typeof req.headers["x-cso-identity"] === "string" ? req.headers["x-cso-identity"] : undefined;
+      typeof req.headers["x-user-identity"] === "string"
+        ? req.headers["x-user-identity"]
+        : undefined;
     const record = {
       httpMethod: req.method ?? "",
       identity,

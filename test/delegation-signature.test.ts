@@ -19,7 +19,7 @@ import {
 
 const NOW = Math.floor(Date.now() / 1000);
 const ISSUER = "https://idp.example";
-const AUD = "https://pfqa.example/mcp";
+const AUD = "https://files.example/mcp";
 const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64url");
 
 type Pair = Awaited<ReturnType<typeof generateKeyPair>>;
@@ -43,7 +43,7 @@ const claims = (extra: Record<string, unknown> = {}) => ({
   iat: NOW - 10,
   exp: NOW + 110,
   jti: randomUUID(),
-  act: { sub: "master-quote-agent" },
+  act: { sub: "orchestrator-agent" },
   ...extra,
 });
 
@@ -101,12 +101,12 @@ afterEach(async () => {
 function policy(source: DelegationKeySource, algorithms = ["ES256", "EdDSA"]): DelegationPolicy {
   return {
     upstreams: {
-      pfqa: {
-        incomingHeader: "x-delegate-pfqa",
+      files: {
+        incomingHeader: "x-delegate-files",
         audience: AUD,
         maxLifetimeSeconds: 300,
         clockSkewSeconds: 30,
-        allowedActors: ["master-quote-agent"],
+        allowedActors: ["orchestrator-agent"],
         signature: { issuer: ISSUER, algorithms, keys: delegationKeySet(source) },
       },
     },
@@ -115,8 +115,8 @@ function policy(source: DelegationKeySource, algorithms = ["ES256", "EdDSA"]): D
 }
 
 async function run(p: DelegationPolicy, token: string) {
-  const r = await checkDelegationAsync(p, { "x-delegate-pfqa": token }, NOW);
-  return { rules: (r.perUpstream.pfqa ?? []).map((f) => f.rule), result: r };
+  const r = await checkDelegationAsync(p, { "x-delegate-files": token }, NOW);
+  return { rules: (r.perUpstream.files ?? []).map((f) => f.rule), result: r };
 }
 
 const inline = () => ({ jwks: { keys: [keys.es.jwk, keys.ed.jwk] } });
@@ -127,7 +127,7 @@ describe("signature mode: valid tokens", () => {
     for (const key of [keys.es, keys.ed]) {
       const { rules, result } = await run(policy(inline()), await sign(key));
       expect(rules, key.alg).toEqual([]);
-      expect(result.tokens.pfqa.verified).toBe("signature");
+      expect(result.tokens.files.verified).toBe("signature");
     }
   });
 
@@ -144,9 +144,9 @@ describe("signature mode: valid tokens", () => {
   it("keeps structural rules and names in signature mode", async () => {
     await ready;
     const p = policy(inline());
-    expect((await run(p, await sign(keys.es, { aud: "https://psqa.example/mcp" }))).rules).toEqual([
-      "delegation-audience-mismatch",
-    ]);
+    expect(
+      (await run(p, await sign(keys.es, { aud: "https://tickets.example/mcp" }))).rules,
+    ).toEqual(["delegation-audience-mismatch"]);
     expect(
       (await run(p, await sign(keys.es, { aud: "https://bastion.example/mcp" }))).rules,
     ).toEqual(["delegation-passthrough"]);
@@ -158,14 +158,18 @@ describe("signature mode: valid tokens", () => {
       ...p,
       upstreams: {
         ...p.upstreams,
-        psqa: { ...p.upstreams.pfqa, incomingHeader: "x-delegate-psqa", audience: "psqa" },
+        tickets: {
+          ...p.upstreams.files,
+          incomingHeader: "x-delegate-tickets",
+          audience: "tickets",
+        },
       },
     };
     const r = await checkDelegationAsync(
       both,
       {
-        "x-delegate-pfqa": await sign(keys.es),
-        "x-delegate-psqa": await sign(keys.es, { aud: "psqa", sub: "user:raj" }),
+        "x-delegate-files": await sign(keys.es),
+        "x-delegate-tickets": await sign(keys.es, { aud: "tickets", sub: "user:raj" }),
       },
       NOW,
     );
@@ -182,7 +186,7 @@ describe("signature mode: forgeries", () => {
       const token = `${b64({ alg, typ: "JWT" })}.${b64(claims())}.`;
       const { rules, result } = await run(p, token);
       expect(rules, alg).toEqual(["delegation-alg-disallowed"]);
-      expect(result.tokens.pfqa.verified).toBe("failed");
+      expect(result.tokens.files.verified).toBe("failed");
     }
     expect(jwks.hits).toHaveLength(0);
   });
@@ -242,7 +246,7 @@ describe("signature mode: forgeries", () => {
       await sign(keys.es, { iss: "https://evil-idp.example" }),
     );
     expect(rules).toEqual(["delegation-issuer-mismatch"]);
-    expect(result.tokens.pfqa.verified).toBe("signature");
+    expect(result.tokens.files.verified).toBe("signature");
   });
 
   it("a payload changed after signing fails verification", async () => {
@@ -292,8 +296,8 @@ describe("signature mode: operations", () => {
     for (let i = 0; i < 4; i++) {
       const { rules, result } = await run(p, token);
       expect(rules).toEqual(["delegation-key-unknown"]);
-      expect(result.errors?.pfqa).toMatch(/key set unavailable/);
-      expect(result.errors?.pfqa).not.toContain(token);
+      expect(result.errors?.files).toMatch(/key set unavailable/);
+      expect(result.errors?.files).not.toContain(token);
     }
     expect(jwks.hits).toHaveLength(1); // failed fast inside the cooldown
 
@@ -310,7 +314,7 @@ describe("signature mode: operations", () => {
     const started = Date.now();
     const { rules, result } = await run(p, await sign(keys.es));
     expect(rules).toEqual(["delegation-key-unknown"]);
-    expect(result.errors?.pfqa).toMatch(/key set unavailable/);
+    expect(result.errors?.files).toMatch(/key set unavailable/);
     expect(Date.now() - started).toBeLessThan(2_000);
   });
 
@@ -324,13 +328,13 @@ describe("signature mode configuration", () => {
   const server = (delegation: Record<string, unknown>) => ({
     transport: "http",
     url: "http://localhost:8011/mcp",
-    forwardHeaders: { "x-cso-identity": "x-cso-delegate-pfqa" },
-    delegation: { audience: "pfqa", verify: "signature", issuer: ISSUER, ...delegation },
+    forwardHeaders: { "x-user-identity": "x-delegate-files" },
+    delegation: { audience: "files", verify: "signature", issuer: ISSUER, ...delegation },
   });
   const parse = (delegation: Record<string, unknown>) =>
     BastionConfigSchema.safeParse({
       listen: { mode: "http" },
-      servers: { pfqa: server(delegation) },
+      servers: { files: server(delegation) },
     });
   const messages = (r: ReturnType<typeof parse>) =>
     r.success ? "" : r.error.issues.map((i) => i.message).join(" | ");
@@ -393,7 +397,7 @@ describe("signature mode configuration", () => {
     const r = BastionConfigSchema.safeParse({
       listen: { mode: "http" },
       servers: {
-        pfqa: { ...server({}), delegation: { audience: "pfqa", issuer: ISSUER } },
+        files: { ...server({}), delegation: { audience: "files", issuer: ISSUER } },
       },
     });
     expect(messages(r)).toMatch(/"issuer" is only valid with verify: "signature"/);

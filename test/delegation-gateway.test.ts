@@ -43,7 +43,7 @@ function delegate(aud: string, sub: string, extra: Record<string, unknown> = {})
     iat: now - 5,
     exp: now + 115,
     jti: randomUUID(),
-    act: { sub: "master-quote-agent" },
+    act: { sub: "orchestrator-agent" },
     ...extra,
   };
   return `${b64({ typ: "JWT", alg: "HS256" })}.${b64(payload)}.${b64(randomUUID())}`;
@@ -55,22 +55,22 @@ function textOf(res: unknown): string {
 }
 
 /** Bastion config for two sub-agents, each with its own delegate header and audience. */
-function rawConfig(pfqaUrl: string, psqaUrl: string, extra: Record<string, unknown> = {}) {
+function rawConfig(filesUrl: string, ticketsUrl: string, extra: Record<string, unknown> = {}) {
   const server = (url: string, name: string) => ({
     transport: "http",
     url,
     protocol: "legacy",
     connect: "onDemand",
-    forwardHeaders: { "x-cso-identity": `x-cso-delegate-${name}` },
+    forwardHeaders: { "x-user-identity": `x-delegate-${name}` },
     delegation: {
       audience: name,
       maxLifetimeSeconds: 120,
-      allowedActors: ["master-quote-agent"],
+      allowedActors: ["orchestrator-agent"],
       maxChainDepth: 2,
     },
   });
   return {
-    servers: { pfqa: server(pfqaUrl, "pfqa"), psqa: server(psqaUrl, "psqa") },
+    servers: { files: server(filesUrl, "files"), tickets: server(ticketsUrl, "tickets") },
     listen: { mode: "http" },
     delegation: { gatewayAudiences: ["mcp-bastion"], subjectKey: SUBJECT_KEY },
     ...extra,
@@ -83,25 +83,25 @@ afterEach(async () => {
 });
 
 async function client(url: string, headers: Record<string, string>): Promise<Client> {
-  const c = new Client({ name: "master-engine", version: "0.0.0" }, { capabilities: {} });
+  const c = new Client({ name: "orchestrator", version: "0.0.0" }, { capabilities: {} });
   await c.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } }));
   cleanups.push(() => c.close());
   return c;
 }
 
 async function startGateway(extra: Record<string, unknown> = {}): Promise<{
-  pfqa: UpstreamFixture;
-  psqa: UpstreamFixture;
+  files: UpstreamFixture;
+  tickets: UpstreamFixture;
   mgr: UpstreamManager;
   listener: HttpListener;
 }> {
-  const pfqa = (await startIdentityHttpServer()) as UpstreamFixture;
-  const psqa = (await startIdentityHttpServer()) as UpstreamFixture;
+  const files = (await startIdentityHttpServer()) as UpstreamFixture;
+  const tickets = (await startIdentityHttpServer()) as UpstreamFixture;
   cleanups.push(
-    () => pfqa.close(),
-    () => psqa.close(),
+    () => files.close(),
+    () => tickets.close(),
   );
-  const raw = rawConfig(pfqa.url, psqa.url, extra) as { security?: Record<string, unknown> };
+  const raw = rawConfig(files.url, tickets.url, extra) as { security?: Record<string, unknown> };
   const mgr = new UpstreamManager(
     BastionConfigSchema.parse({
       ...raw,
@@ -114,86 +114,86 @@ async function startGateway(extra: Record<string, unknown> = {}): Promise<{
   cleanups.push(() => mgr.closeAll());
   const listener = await startHttpServer(mgr, { host: "127.0.0.1", port: 0, path: "/mcp" });
   cleanups.push(() => listener.close());
-  return { pfqa, psqa, mgr, listener };
+  return { files, tickets, mgr, listener };
 }
 
 describe("delegation checks in the gateway", () => {
   it("serves a request whose tokens all name one user", async () => {
-    const { pfqa, mgr, listener } = await startGateway();
-    const token = delegate("pfqa", "user:priya");
+    const { files, mgr, listener } = await startGateway();
+    const token = delegate("files", "user:priya");
     const c = await client(listener.url, {
-      "x-cso-delegate-pfqa": token,
-      "x-cso-delegate-psqa": delegate("psqa", "user:priya"),
+      "x-delegate-files": token,
+      "x-delegate-tickets": delegate("tickets", "user:priya"),
     });
-    const res = await c.callTool({ name: "pfqa__whoami", arguments: {} });
+    const res = await c.callTool({ name: "files__whoami", arguments: {} });
     expect(res.isError, textOf(res)).toBeFalsy();
     expect(textOf(res)).toBe(`identity=${token} n=`);
-    expect(pfqa.requests.some((q) => q.identity === token)).toBe(true);
-    expect(mgr.status().find((s) => s.name === "pfqa")?.delegation).toEqual({
+    expect(files.requests.some((q) => q.identity === token)).toBe(true);
+    expect(mgr.status().find((s) => s.name === "files")?.delegation).toEqual({
       mode: "structural",
-      audience: "pfqa",
+      audience: "files",
       lastViolation: null,
     });
   });
 
   it("blocks a request mixing two users before any upstream request (call and list)", async () => {
-    const { pfqa, psqa, mgr, listener } = await startGateway();
+    const { files, tickets, mgr, listener } = await startGateway();
     const c = await client(listener.url, {
-      "x-cso-delegate-pfqa": delegate("pfqa", "user:priya"),
-      "x-cso-delegate-psqa": delegate("psqa", "user:raj"),
+      "x-delegate-files": delegate("files", "user:priya"),
+      "x-delegate-tickets": delegate("tickets", "user:raj"),
     });
-    const res = await c.callTool({ name: "pfqa__whoami", arguments: {} });
+    const res = await c.callTool({ name: "files__whoami", arguments: {} });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toBe(
-      'Blocked by mcp-bastion: the delegation token for "pfqa" failed delegation-subject-mixing, ' +
-        'so "pfqa__whoami" was not forwarded.',
+      'Blocked by mcp-bastion: the delegation token for "files" failed delegation-subject-mixing, ' +
+        'so "files__whoami" was not forwarded.',
     );
     const names = (await c.listTools()).tools.map((t) => t.name);
     expect(names.filter((n) => !n.startsWith("bastion__"))).toEqual([]);
-    expect(pfqa.requests).toHaveLength(0);
-    expect(psqa.requests).toHaveLength(0);
-    const status = mgr.status().find((s) => s.name === "pfqa")!;
+    expect(files.requests).toHaveLength(0);
+    expect(tickets.requests).toHaveLength(0);
+    const status = mgr.status().find((s) => s.name === "files")!;
     expect(status.state).toBe("idle");
     expect(status.delegation?.lastViolation?.rule).toBe("delegation-subject-mixing");
     expect(Object.keys(status.delegation!.lastViolation!)).toEqual(["rule", "at"]);
   });
 
   it("does not list a shared, already-connected upstream to a blocked request", async () => {
-    const { pfqa, listener } = await startGateway();
-    const good = await client(listener.url, { "x-cso-delegate-pfqa": delegate("pfqa", "u:a") });
-    expect((await good.listTools()).tools.map((t) => t.name)).toContain("pfqa__whoami");
-    const before = pfqa.requests.length;
+    const { files, listener } = await startGateway();
+    const good = await client(listener.url, { "x-delegate-files": delegate("files", "u:a") });
+    expect((await good.listTools()).tools.map((t) => t.name)).toContain("files__whoami");
+    const before = files.requests.length;
     const wrongAudience = await client(listener.url, {
-      "x-cso-delegate-pfqa": delegate("psqa", "u:a"),
+      "x-delegate-files": delegate("tickets", "u:a"),
     });
     expect((await wrongAudience.listTools()).tools.map((t) => t.name)).not.toContain(
-      "pfqa__whoami",
+      "files__whoami",
     );
-    const res = await wrongAudience.callTool({ name: "pfqa__whoami", arguments: {} });
+    const res = await wrongAudience.callTool({ name: "files__whoami", arguments: {} });
     expect(textOf(res)).toMatch(/failed delegation-audience-mismatch/);
-    expect(pfqa.requests.length).toBe(before);
+    expect(files.requests.length).toBe(before);
   });
 
   it("the fetch backstop refuses a blocked token on a reconnect made inside the request", async () => {
-    const { pfqa, listener } = await startGateway();
+    const { files, listener } = await startGateway();
     const c = await client(listener.url, {
-      "x-cso-delegate-pfqa": delegate("mcp-bastion", "user:priya"), // passthrough
+      "x-delegate-files": delegate("mcp-bastion", "user:priya"), // passthrough
     });
-    const res = await c.callTool({ name: "bastion__reconnect", arguments: { server: "pfqa" } });
+    const res = await c.callTool({ name: "bastion__reconnect", arguments: { server: "files" } });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toMatch(/delegation-passthrough/);
-    expect(pfqa.requests).toHaveLength(0);
+    expect(files.requests).toHaveLength(0);
   });
 
   it("chain depth is warn-only by default: the call goes ahead and status notes the rule", async () => {
-    const { pfqa, mgr, listener } = await startGateway();
-    const act = { sub: "master-quote-agent", act: { sub: "planner", act: { sub: "helper" } } };
-    const token = delegate("pfqa", "user:priya", { act });
-    const c = await client(listener.url, { "x-cso-delegate-pfqa": token });
-    const res = await c.callTool({ name: "pfqa__whoami", arguments: {} });
+    const { files, mgr, listener } = await startGateway();
+    const act = { sub: "orchestrator-agent", act: { sub: "planner", act: { sub: "helper" } } };
+    const token = delegate("files", "user:priya", { act });
+    const c = await client(listener.url, { "x-delegate-files": token });
+    const res = await c.callTool({ name: "files__whoami", arguments: {} });
     expect(res.isError, textOf(res)).toBeFalsy();
-    expect(pfqa.requests.some((q) => q.identity === token)).toBe(true);
-    const status = mgr.status().find((s) => s.name === "pfqa")!;
+    expect(files.requests.some((q) => q.identity === token)).toBe(true);
+    const status = mgr.status().find((s) => s.name === "files")!;
     expect(status.delegation?.lastViolation?.rule).toBe("delegation-chain-depth");
   });
 });
@@ -203,26 +203,26 @@ describe("delegation checks in shadow mode ('observe')", () => {
     const dir = await mkdtemp(join(tmpdir(), "bastion-deleg-shadow-"));
     cleanups.push(() => rm(dir, { recursive: true, force: true }));
     const auditPath = join(dir, "audit.jsonl");
-    const { pfqa, mgr, listener } = await startGateway({
+    const { files, mgr, listener } = await startGateway({
       security: { enforcementProfile: "observe" },
       audit: { enabled: true, sinks: [{ type: "file", path: auditPath }] },
     });
 
     // Chain depth only: 'balanced' warns on it too, so no wouldBlock.
-    const act = { sub: "master-quote-agent", act: { sub: "planner", act: { sub: "helper" } } };
+    const act = { sub: "orchestrator-agent", act: { sub: "planner", act: { sub: "helper" } } };
     const deep = await client(listener.url, {
-      "x-cso-delegate-pfqa": delegate("pfqa", "user:priya", { act }),
+      "x-delegate-files": delegate("files", "user:priya", { act }),
     });
-    expect((await deep.callTool({ name: "pfqa__whoami", arguments: {} })).isError).toBeFalsy();
+    expect((await deep.callTool({ name: "files__whoami", arguments: {} })).isError).toBeFalsy();
 
     // Two users in one request: 'balanced' would block this before any upstream contact.
     const mixed = await client(listener.url, {
-      "x-cso-delegate-pfqa": delegate("pfqa", "user:priya"),
-      "x-cso-delegate-psqa": delegate("psqa", "user:raj"),
+      "x-delegate-files": delegate("files", "user:priya"),
+      "x-delegate-tickets": delegate("tickets", "user:raj"),
     });
-    const res = await mixed.callTool({ name: "pfqa__whoami", arguments: {} });
+    const res = await mixed.callTool({ name: "files__whoami", arguments: {} });
     expect(res.isError, textOf(res)).toBeFalsy();
-    expect(pfqa.requests.length).toBeGreaterThan(0);
+    expect(files.requests.length).toBeGreaterThan(0);
 
     await mgr.closeAll();
     const events = (await readFile(auditPath, "utf8"))
@@ -237,11 +237,11 @@ describe("delegation checks in shadow mode ('observe')", () => {
 
 describe("delegation checks end to end (CLI)", () => {
   it("audits a blocked mixed-user request with a hashed subject and records no token or raw sub", async () => {
-    const pfqa = (await startIdentityHttpServer()) as UpstreamFixture;
-    const psqa = (await startIdentityHttpServer()) as UpstreamFixture;
+    const files = (await startIdentityHttpServer()) as UpstreamFixture;
+    const tickets = (await startIdentityHttpServer()) as UpstreamFixture;
     cleanups.push(
-      () => pfqa.close(),
-      () => psqa.close(),
+      () => files.close(),
+      () => tickets.close(),
     );
 
     const webhookBodies: string[] = [];
@@ -264,7 +264,7 @@ describe("delegation checks end to end (CLI)", () => {
     await writeFile(
       configPath,
       JSON.stringify(
-        rawConfig(pfqa.url, psqa.url, {
+        rawConfig(files.url, tickets.url, {
           security: { redactResponseSecrets: false }, // the fixture echoes the token in its result
           audit: {
             enabled: true,
@@ -308,27 +308,27 @@ describe("delegation checks end to end (CLI)", () => {
     const priya = `user:priya-${randomUUID()}`;
     const raj = `user:raj-${randomUUID()}`;
     const tokens = {
-      goodPfqa: delegate("pfqa", priya),
-      goodPsqa: delegate("psqa", priya),
-      mixedPfqa: delegate("pfqa", priya),
-      mixedPsqa: delegate("psqa", raj),
+      goodFiles: delegate("files", priya),
+      goodTickets: delegate("tickets", priya),
+      mixedFiles: delegate("files", priya),
+      mixedTickets: delegate("tickets", raj),
     };
     const good = await client(url, {
-      "x-cso-delegate-pfqa": tokens.goodPfqa,
-      "x-cso-delegate-psqa": tokens.goodPsqa,
+      "x-delegate-files": tokens.goodFiles,
+      "x-delegate-tickets": tokens.goodTickets,
     });
     const mixed = await client(url, {
-      "x-cso-delegate-pfqa": tokens.mixedPfqa,
-      "x-cso-delegate-psqa": tokens.mixedPsqa,
+      "x-delegate-files": tokens.mixedFiles,
+      "x-delegate-tickets": tokens.mixedTickets,
     });
 
-    const blocked = await mixed.callTool({ name: "pfqa__whoami", arguments: { n: 1 } });
+    const blocked = await mixed.callTool({ name: "files__whoami", arguments: { n: 1 } });
     expect(textOf(blocked)).toMatch(/failed delegation-subject-mixing/);
-    expect(pfqa.requests).toHaveLength(0);
-    expect(psqa.requests).toHaveLength(0);
+    expect(files.requests).toHaveLength(0);
+    expect(tickets.requests).toHaveLength(0);
 
-    const ok = await good.callTool({ name: "pfqa__whoami", arguments: { n: 2 } });
-    expect(textOf(ok)).toBe(`identity=${tokens.goodPfqa} n=2`);
+    const ok = await good.callTool({ name: "files__whoami", arguments: { n: 2 } });
+    expect(textOf(ok)).toBe(`identity=${tokens.goodFiles} n=2`);
     const statusText = textOf(await mixed.callTool({ name: "bastion__status", arguments: {} }));
     expect(statusText).toMatch(/"rule":\s*"delegation-subject-mixing"/);
     expect(statusText).toMatch(/"mode":\s*"structural"/);
@@ -345,16 +345,16 @@ describe("delegation checks end to end (CLI)", () => {
     const hashed = subjectPseudonym(SUBJECT_KEY, ISSUER, priya);
     const blockedEvent = events.find((e) => e.decision === "blocked_delegation");
     expect(blockedEvent).toMatchObject({
-      server: "pfqa",
+      server: "files",
       tool: "whoami",
-      namespacedName: "pfqa__whoami",
+      namespacedName: "files__whoami",
       outcome: "blocked",
-      forwardedHeaders: ["x-cso-identity"],
+      forwardedHeaders: ["x-user-identity"],
       delegation: {
         subject: hashed,
         issuer: ISSUER,
-        audience: "pfqa",
-        actors: ["master-quote-agent"],
+        audience: "files",
+        actors: ["orchestrator-agent"],
         chainDepth: 1,
         verified: "structural",
         findings: [{ rule: "delegation-subject-mixing", severity: "high" }],
@@ -396,22 +396,22 @@ describe("signature mode in the gateway", () => {
     cleanups.push(() => new Promise((r) => jwksServer.close(r)));
     const jwksUrl = `http://127.0.0.1:${(jwksServer.address() as { port: number }).port}/jwks`;
 
-    const pfqa = (await startIdentityHttpServer()) as UpstreamFixture;
-    cleanups.push(() => pfqa.close());
+    const files = (await startIdentityHttpServer()) as UpstreamFixture;
+    cleanups.push(() => files.close());
     const dir = await mkdtemp(join(tmpdir(), "bastion-sig-"));
     cleanups.push(() => rm(dir, { recursive: true, force: true }));
     const auditPath = join(dir, "audit.jsonl");
     const mgr = new UpstreamManager(
       BastionConfigSchema.parse({
         servers: {
-          pfqa: {
+          files: {
             transport: "http",
-            url: pfqa.url,
+            url: files.url,
             protocol: "legacy",
             connect: "onDemand",
-            forwardHeaders: { "x-cso-identity": "x-cso-delegate-pfqa" },
+            forwardHeaders: { "x-user-identity": "x-delegate-files" },
             delegation: {
-              audience: "pfqa",
+              audience: "files",
               verify: "signature",
               issuer: ISSUER,
               algorithms: ["ES256"],
@@ -439,10 +439,10 @@ describe("signature mode in the gateway", () => {
 
     const now = Math.floor(Date.now() / 1000);
     const sign = (key: CryptoKey, sub = "user:priya") =>
-      new SignJWT({ sub, act: { sub: "master-quote-agent" } })
+      new SignJWT({ sub, act: { sub: "orchestrator-agent" } })
         .setProtectedHeader({ alg: "ES256", kid: "spire-1", typ: "JWT" })
         .setIssuer(ISSUER)
-        .setAudience("pfqa")
+        .setAudience("files")
         .setIssuedAt(now - 5)
         .setExpirationTime(now + 100)
         .sign(key);
@@ -454,7 +454,7 @@ describe("signature mode in the gateway", () => {
         .map((l) => JSON.parse(l) as { decision: string; delegation?: Record<string, unknown> });
     };
     return {
-      pfqa,
+      files,
       mgr,
       listener,
       jwksHits,
@@ -469,24 +469,24 @@ describe("signature mode in the gateway", () => {
   it("passes a validly signed token through and blocks a forged one before any upstream request", async () => {
     const g = await setup();
     const forged = await g.sign(g.attacker.privateKey);
-    const bad = await client(g.listener.url, { "x-cso-delegate-pfqa": forged });
-    const blocked = await bad.callTool({ name: "pfqa__whoami", arguments: {} });
+    const bad = await client(g.listener.url, { "x-delegate-files": forged });
+    const blocked = await bad.callTool({ name: "files__whoami", arguments: {} });
     expect(textOf(blocked)).toBe(
-      'Blocked by mcp-bastion: the delegation token for "pfqa" failed ' +
-        'delegation-signature-invalid, so "pfqa__whoami" was not forwarded.',
+      'Blocked by mcp-bastion: the delegation token for "files" failed ' +
+        'delegation-signature-invalid, so "files__whoami" was not forwarded.',
     );
-    expect((await bad.listTools()).tools.map((t) => t.name)).not.toContain("pfqa__whoami");
-    expect(g.pfqa.requests).toHaveLength(0);
+    expect((await bad.listTools()).tools.map((t) => t.name)).not.toContain("files__whoami");
+    expect(g.files.requests).toHaveLength(0);
 
     const token = await g.sign(g.trusted.privateKey);
-    const good = await client(g.listener.url, { "x-cso-delegate-pfqa": token });
-    const ok = await good.callTool({ name: "pfqa__whoami", arguments: {} });
+    const good = await client(g.listener.url, { "x-delegate-files": token });
+    const ok = await good.callTool({ name: "files__whoami", arguments: {} });
     expect(ok.isError, textOf(ok)).toBeFalsy();
     expect(textOf(ok)).toBe(`identity=${token} n=`);
     expect(g.jwksHits).toHaveLength(1); // fetched once, cached across requests
     expect(g.mgr.status()[0].delegation).toMatchObject({
       mode: "signature",
-      audience: "pfqa",
+      audience: "files",
       lastViolation: { rule: "delegation-signature-invalid" },
     });
 
@@ -509,10 +509,10 @@ describe("signature mode in the gateway", () => {
     const g = await setup();
     g.setDown(true);
     const token = await g.sign(g.trusted.privateKey);
-    const c = await client(g.listener.url, { "x-cso-delegate-pfqa": token });
-    const res = await c.callTool({ name: "pfqa__whoami", arguments: {} });
+    const c = await client(g.listener.url, { "x-delegate-files": token });
+    const res = await c.callTool({ name: "files__whoami", arguments: {} });
     expect(textOf(res)).toMatch(/failed delegation-key-unknown/);
-    expect(g.pfqa.requests).toHaveLength(0);
+    expect(g.files.requests).toHaveLength(0);
     const status = g.mgr.status()[0];
     expect(status.lastError).toMatch(/delegation key set unavailable/);
     expect(status.lastError).not.toContain(token);
