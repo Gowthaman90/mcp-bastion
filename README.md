@@ -11,6 +11,7 @@ _Self-healing connections, runtime tool-security, and a compliance-mapped audit 
 [![MCP Registry](https://img.shields.io/badge/MCP_Registry-listed-6f42c1)](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.Gowthaman90/mcp-bastion)
 [![Measured coverage](<https://img.shields.io/badge/mcp--defense--bench-66%25_coverage_(37_vectors)-2ea44f>)](https://github.com/Gowthaman90/mcp-defense-bench)
 [![mcp-bastion MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Gowthaman90/mcp-bastion/badges/score.svg)](https://glama.ai/mcp/servers/Gowthaman90/mcp-bastion)
+[![M8ven Score](https://m8ven.ai/badge/mcp/gowthaman90-mcp-bastion-1l5oda?v=c1b496c95f97e5abb999524b2d72ffe8&variant=verified)](https://m8ven.ai/mcp/gowthaman90-mcp-bastion-1l5oda?s=readme)
 [![CI](https://github.com/Gowthaman90/mcp-bastion/actions/workflows/ci.yml/badge.svg)](https://github.com/Gowthaman90/mcp-bastion/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
