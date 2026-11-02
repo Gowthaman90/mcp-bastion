@@ -706,6 +706,9 @@ The steps are identical for every client — only the **config file location** d
 
 > **Gradual adoption:** you don't have to route every server through Bastion — put only your flaky or
 > untrusted servers behind it and leave the rest connected directly.
+>
+> **Rolling out to a team?** [docs/ADOPTING.md](./docs/ADOPTING.md) walks through a 10-minute trial, a
+> shadow pilot that never blocks, and enforcement, plus the evidence a security reviewer will ask for.
 
 ## Architecture
 
@@ -766,14 +769,17 @@ Contributions are very welcome — this project is built to be community-owned. 
 **[Code of Conduct](./CODE_OF_CONDUCT.md)**.
 
 In short: open an issue for non-trivial changes, keep PRs focused with tests, and make sure
-`npm run check` passes (CI runs it on Node 18/20/22). Good first areas: additional client setup
-recipes, more upstream test fixtures, and Streamable HTTP transport support.
+`npm run check` passes (CI runs it on Node 20/22/24). Good first areas: additional client setup
+recipes and more upstream test fixtures.
+
+Using mcp-bastion at your organization? Add it to **[ADOPTERS.md](./ADOPTERS.md)** with a pull request.
 
 ## Security
 
 `mcp-bastion` is security-adjacent software, so we hold it to a high bar. Please report
 vulnerabilities privately — **do not open a public issue**. See **[SECURITY.md](./SECURITY.md)** for
-the disclosure process.
+the disclosure process and supported versions. Bastion collects no data: see
+**[PRIVACY.md](./PRIVACY.md)**.
 
 ## License
 

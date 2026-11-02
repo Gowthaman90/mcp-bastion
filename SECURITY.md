@@ -1,42 +1,81 @@
 # Security Policy
 
-`mcp-bastion` is security-adjacent software — it sits in the tool-call path of AI agents — so we take
-its security posture seriously and appreciate responsible disclosure.
+`mcp-bastion` sits in the tool-call path of AI agents, so its own security matters. Thank you for
+reporting issues responsibly.
 
 ## Supported versions
 
-The project is pre-1.0 and evolving quickly. Security fixes are applied to the latest released version
-on the `main` branch.
+| Version              | Supported                                                 |
+| -------------------- | --------------------------------------------------------- |
+| 1.4.x (latest minor) | ✅ security and bug fixes                                 |
+| 1.3.x                | ✅ security fixes until 2027-01-27 (3 months after 1.4.0) |
+| < 1.3                | ❌ please upgrade                                         |
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| < 0.1   | :x:                |
+From 1.x on we follow semantic versioning. Only the latest minor and the one before it are supported:
+when a new minor ships, the previous minor gets security fixes for 3 months, and older minors are no
+longer supported.
 
 ## Reporting a vulnerability
 
-**Please do not report security vulnerabilities through public GitHub issues, discussions, or pull
-requests.**
+**Please don't report vulnerabilities in public issues, discussions, or pull requests.**
 
-Instead, use one of the following private channels:
+Use one of these private channels:
 
-- **GitHub Security Advisories** — use the repository's _Security_ tab → _Report a vulnerability_
-  (preferred), or
-- **Email** — agowthaman1990@outlook.com
+- **GitHub private vulnerability reporting** (preferred): the repository's _Security_ tab →
+  _Report a vulnerability_.
+- **Email:** agowthaman1990@outlook.com, with `[mcp-bastion security]` in the subject.
 
-Please include as much of the following as you can:
+It helps if you include:
 
-- A description of the vulnerability and its impact.
-- Steps to reproduce (a minimal proof of concept is ideal).
-- The affected version(s) and environment.
-- Any suggested remediation.
+- what the issue is, and what an attacker could do with it
+- steps to reproduce (a minimal config plus a malicious or mock upstream is ideal)
+- affected version(s), transport (stdio / HTTP), and Node.js version
+- any fix you'd suggest
+
+## Scope
+
+**In scope:** flaws in mcp-bastion itself, for example:
+
+- a way to get a call past a check that is configured to `block`
+- a way for the agent or an upstream to clear a block or re-approve a tool
+- leaking secrets or arguments into logs or audit sinks against the configured `includeArgs`
+- forging or silently truncating a _keyed_ audit chain
+- auth or identity-forwarding bypass in HTTP / gateway mode
+- crashes or resource exhaustion triggered by a malicious upstream
+
+**Usually out of scope** (report it to the relevant project instead):
+
+- vulnerabilities in an upstream MCP server
+- vulnerabilities in the MCP client
+- vulnerabilities in the MCP SDK
+
+Also out of scope:
+
+- heuristic checks (description or response poisoning) missing a _new_ payload. These are
+  bypassable by design. Please open a normal issue or contribute a vector to
+  [mcp-defense-bench](https://github.com/Gowthaman90/mcp-defense-bench).
+- anything that needs control of the host, the config file, or the Bastion process
+
+If you're not sure, report it privately anyway.
 
 ## What to expect
 
-- **Acknowledgement** within **3 business days**.
-- An initial assessment and severity classification within **7 business days**.
-- Regular updates on remediation progress.
-- Coordinated disclosure: we ask that you give us reasonable time to release a fix before any public
-  disclosure, and we will credit you (if you wish) once the fix ships.
+| Step                                      | Target                                                                                          |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Acknowledgement                           | within 3 business days                                                                          |
+| Initial assessment and severity (CVSS)    | within 7 business days                                                                          |
+| Fix released for high and critical issues | within 30 days of confirmation where feasible                                                   |
+| Public disclosure                         | when the fix ships, or 90 days after the report, whichever is first (unless we agree otherwise) |
 
-Thank you for helping keep mcp-bastion and its users safe.
+Confirmed vulnerabilities are published as a **GitHub Security Advisory** with a **CVE** requested
+through GitHub. The fix goes into the changelog, and you're credited unless you'd rather not be.
+
+## Safe harbor
+
+We won't pursue or support legal action against good-faith research that follows this policy:
+
+- you test only against your own installations
+- you avoid harming others' data or services
+- you give us reasonable time to fix before public disclosure
+
+There's no bug bounty.

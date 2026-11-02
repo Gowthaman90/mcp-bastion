@@ -1,0 +1,45 @@
+name: Release
+
+# Publishes to npm when a version tag (v1.2.3) is pushed. Uses npm trusted publishing (OIDC), so there
+# is no npm token in the repo, and npm adds a provenance attestation linking the package to this commit
+# and workflow. One-time setup on npmjs.com: package settings → Trusted publisher → GitHub Actions,
+# repository Gowthaman90/mcp-bastion, workflow release.yml, environment npm.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Tag matches package.json version
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - name: Verify (format, lint, types, tests)
+        run: npm run check
+
+      - name: Publish with provenance
+        run: npm publish --provenance --access public
