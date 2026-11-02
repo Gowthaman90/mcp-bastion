@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-11-02
+
+Documentation and release process only. No code or behaviour changes.
+
+- **Released with npm provenance.** This is the first version published from GitHub Actions through npm
+  trusted publishing, so npm records which commit and workflow built it. Check it with
+  `npm audit signatures`.
+- **New docs:** [docs/ADOPTING.md](docs/ADOPTING.md) (a 10-minute trial, a shadow pilot that never
+  blocks, then enforcement, plus answers for a security review), [ADOPTERS.md](ADOPTERS.md) and
+  [PRIVACY.md](PRIVACY.md) (Bastion collects no data).
+- **SECURITY.md:** supported versions (1.4.x; 1.3.x gets security fixes until 2027-01-27), scope,
+  response targets and safe harbor. Private vulnerability reporting is now turned on.
+
 ## [1.4.1] - 2026-10-29
 
 Fixes from an end-to-end test of 1.4.0 behind a multi-agent deployment. No policy or decision changes;
@@ -682,7 +695,8 @@ spanning three layers plus dual transports.
 - Strict TypeScript, layered architecture (`config` / `core` / `security` / `audit` / `proxy` /
   `observability` / `internal`), ESLint + Prettier, unit + end-to-end tests, and CI.
 
-[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.0...v1.4.1
 [0.6.1]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.5.0...v0.6.0
