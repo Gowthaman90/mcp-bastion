@@ -1,0 +1,30 @@
+version: 2
+
+# Minor and patch updates arrive as one grouped PR per ecosystem each week; major updates get their own
+# PR so they can be reviewed alone. Security updates are opened as soon as an advisory is published.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # vitest 5 drops Node 20, which CI still tests and package.json still supports.
+      - dependency-name: vitest
+        update-types: ["version-update:semver-major"]
+      # @modelcontextprotocol/sdk 1.x is the test-only client for the pre-2026 protocol era.
+      - dependency-name: "@modelcontextprotocol/sdk"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        patterns: ["*"]

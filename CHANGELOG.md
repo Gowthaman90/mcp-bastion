@@ -14,6 +14,8 @@ Repository and release process only. No code changes.
   runtime dependencies attached.
 - **OpenSSF Scorecard** runs weekly and on every push to `main`, with a README badge. GitHub Actions
   used by the workflows are pinned to commit SHAs.
+- **Dependabot** opens weekly grouped PRs for npm and GitHub Actions updates, and security-update PRs
+  as soon as an advisory is published.
 
 ## [1.4.2] - 2026-11-02
 
