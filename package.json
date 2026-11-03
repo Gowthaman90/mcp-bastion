@@ -73,26 +73,26 @@
     "access": "public"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.3.1",
-    "@modelcontextprotocol/core": "^2.3.1",
-    "@modelcontextprotocol/node": "^2.1.1",
-    "@modelcontextprotocol/server": "^2.3.1",
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@modelcontextprotocol/core": "^2.4.0",
+    "@modelcontextprotocol/node": "^2.1.2",
+    "@modelcontextprotocol/server": "^2.4.0",
     "commander": "^12.1.0",
     "jose": "6.2.3",
-    "pino": "^9.5.0",
+    "pino": "^10.4.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@eslint/js": "^9.15.0",
-    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/node": "^20.14.0",
-    "eslint": "^9.15.0",
+    "eslint": "^10.14.0",
     "eslint-config-prettier": "^9.1.0",
-    "prettier": "^3.4.1",
+    "prettier": "^3.9.10",
     "tsup": "^8.3.5",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.3",
-    "typescript-eslint": "^8.16.0",
+    "typescript-eslint": "^8.72.1",
     "vitest": "^4.1.12"
   }
 }

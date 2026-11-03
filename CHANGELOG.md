@@ -16,6 +16,9 @@ Repository and release process only. No code changes.
   used by the workflows are pinned to commit SHAs.
 - **Dependabot** opens weekly grouped PRs for npm and GitHub Actions updates, and security-update PRs
   as soon as an advisory is published.
+- **Dependencies:** pino 10 (logger, runtime), MCP SDK 2.4.0 (`client`, `core`, `server`) and
+  `node` 2.1.2, ESLint 10, and minor dev-tool updates. GitHub Actions moved to `checkout` and
+  `setup-node` v7, `upload-artifact` v7 and CodeQL Action v4. `jose` stays pinned at 6.2.3.
 
 ## [1.4.2] - 2026-11-02
 

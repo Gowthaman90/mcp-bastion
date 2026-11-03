@@ -12,7 +12,12 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
+        # jose is pinned exactly (it verifies delegation signatures); review each bump on its own.
+        exclude-patterns: [jose]
     ignore:
+      # Types track the oldest supported Node (package.json engines), not the newest.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
       # vitest 5 drops Node 20, which CI still tests and package.json still supports.
       - dependency-name: vitest
         update-types: ["version-update:semver-major"]
