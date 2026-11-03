@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+Repository and release process only. No code changes.
+
+- **THREAT-MODEL.md:** assets, adversaries, trust boundaries, threats and mitigations, assumptions and
+  non-goals.
+- **Releases** now get a GitHub release created from the CHANGELOG entry, with a CycloneDX SBOM of the
+  runtime dependencies attached.
+- **OpenSSF Scorecard** runs weekly and on every push to `main`, with a README badge. GitHub Actions
+  used by the workflows are pinned to commit SHAs.
+
 ## [1.4.2] - 2026-11-02
 
 Documentation and release process only. No code or behaviour changes.

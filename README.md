@@ -13,6 +13,7 @@ _Self-healing connections, runtime tool-security, and a compliance-mapped audit 
 [![mcp-bastion MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Gowthaman90/mcp-bastion/badges/score.svg)](https://glama.ai/mcp/servers/Gowthaman90/mcp-bastion)
 [![M8ven Score](https://m8ven.ai/badge/mcp/gowthaman90-mcp-bastion-1l5oda?v=c1b496c95f97e5abb999524b2d72ffe8&variant=verified)](https://m8ven.ai/mcp/gowthaman90-mcp-bastion-1l5oda?s=readme)
 [![CI](https://github.com/Gowthaman90/mcp-bastion/actions/workflows/ci.yml/badge.svg)](https://github.com/Gowthaman90/mcp-bastion/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Gowthaman90/mcp-bastion/badge)](https://scorecard.dev/viewer/?uri=github.com/Gowthaman90/mcp-bastion)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](https://www.typescriptlang.org/)
@@ -778,7 +779,8 @@ Using mcp-bastion at your organization? Add it to **[ADOPTERS.md](./ADOPTERS.md)
 
 `mcp-bastion` is security-adjacent software, so we hold it to a high bar. Please report
 vulnerabilities privately — **do not open a public issue**. See **[SECURITY.md](./SECURITY.md)** for
-the disclosure process and supported versions. Bastion collects no data: see
+the disclosure process and supported versions, and **[THREAT-MODEL.md](./THREAT-MODEL.md)** for what
+Bastion defends against and what it doesn't. Bastion collects no data: see
 **[PRIVACY.md](./PRIVACY.md)**.
 
 ## License

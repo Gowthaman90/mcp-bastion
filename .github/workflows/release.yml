@@ -4,6 +4,9 @@ name: Release
 # is no npm token in the repo, and npm adds a provenance attestation linking the package to this commit
 # and workflow. One-time setup on npmjs.com: package settings → Trusted publisher → GitHub Actions,
 # repository Gowthaman90/mcp-bastion, workflow release.yml, environment npm.
+#
+# A second job then creates the GitHub release from the CHANGELOG entry and attaches a CycloneDX SBOM of
+# the runtime dependencies. It is a separate job so it can be re-run without re-publishing to npm.
 
 on:
   push:
@@ -20,9 +23,9 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -43,3 +46,45 @@ jobs:
 
       - name: Publish with provenance
         run: npm publish --provenance --access public
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - name: SBOM (CycloneDX, runtime dependencies)
+        run: npm sbom --sbom-format cyclonedx --omit dev > "mcp-bastion-${GITHUB_REF_NAME#v}.cdx.json"
+
+      - name: Release notes from CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v h="## [$version]" 'index($0, h) == 1 { f = 1; next } /^## \[/ { f = 0 } f' CHANGELOG.md \
+            | sed -E "s#\]\(([A-Za-z0-9_./-]+\.md)\)#](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/\1)#g" \
+            > notes.md
+          if [ ! -s notes.md ]; then
+            echo "No CHANGELOG entry for $version" >&2
+            exit 1
+          fi
+          printf '\nnpm: https://www.npmjs.com/package/mcp-bastion/v/%s\n' "$version" >> notes.md
+
+      - name: Create or update the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sbom="mcp-bastion-${GITHUB_REF_NAME#v}.cdx.json"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$sbom" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
+              --notes-file notes.md "$sbom"
+          fi
