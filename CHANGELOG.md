@@ -18,7 +18,8 @@ Repository and release process only. No code changes.
   as soon as an advisory is published.
 - **Dependencies:** pino 10 (logger, runtime), MCP SDK 2.4.0 (`client`, `core`, `server`) and
   `node` 2.1.2, ESLint 10, and minor dev-tool updates. GitHub Actions moved to `checkout` and
-  `setup-node` v7, `upload-artifact` v7 and CodeQL Action v4. `jose` stays pinned at 6.2.3.
+  `setup-node` v7, `upload-artifact` v7 and CodeQL Action v4. `jose` stays pinned at 6.2.3. Build: tsup 9 (esbuild 0.28, same JavaScript output). Lockfile:
+  `@hono/node-server` 2.1.6 (GHSA-rmxm-3fg6-px4f; `serveStatic` is not used, so Bastion was not exposed).
 
 ## [1.4.2] - 2026-11-02
 
