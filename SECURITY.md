@@ -7,13 +7,14 @@ reporting issues responsibly.
 
 | Version              | Supported                                                 |
 | -------------------- | --------------------------------------------------------- |
-| 1.4.x (latest minor) | ✅ security and bug fixes                                 |
+| 1.5.x (latest minor) | ✅ security and bug fixes                                 |
+| 1.4.x                | ✅ security fixes until 2027-02-04 (3 months after 1.5.0) |
 | 1.3.x                | ✅ security fixes until 2027-01-27 (3 months after 1.4.0) |
 | < 1.3                | ❌ please upgrade                                         |
 
-From 1.x on we follow semantic versioning. Only the latest minor and the one before it are supported:
-when a new minor ships, the previous minor gets security fixes for 3 months, and older minors are no
-longer supported.
+From 1.x on we follow semantic versioning. When a new minor ships, the previous minor gets security
+fixes for 3 months; a window that has already started keeps its end date. Older minors are not
+supported.
 
 ## Reporting a vulnerability
 

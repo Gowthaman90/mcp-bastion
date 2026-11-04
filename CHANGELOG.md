@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-04
+
 Fixes from a trial behind the MCPJungle gateway. All audit changes are additive; `AUDIT_SCHEMA_VERSION`
 stays `1`.
 
@@ -28,6 +30,8 @@ stays `1`.
 
 Repository and release process:
 
+- **Supported versions:** 1.5.x; 1.4.x gets security fixes until 2027-02-04, and 1.3.x keeps its
+  window to 2027-01-27 (see SECURITY.md).
 - **THREAT-MODEL.md:** assets, adversaries, trust boundaries, threats and mitigations, assumptions and
   non-goals.
 - **Releases** now get a GitHub release created from the CHANGELOG entry, with a CycloneDX SBOM of the
@@ -730,7 +734,8 @@ spanning three layers plus dual transports.
 - Strict TypeScript, layered architecture (`config` / `core` / `security` / `audit` / `proxy` /
   `observability` / `internal`), ESLint + Prettier, unit + end-to-end tests, and CI.
 
-[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.2...HEAD
+[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.0...v1.4.1
 [0.6.1]: https://github.com/Gowthaman90/mcp-bastion/compare/v0.6.0...v0.6.1

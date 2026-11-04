@@ -1,6 +1,6 @@
 # Threat model
 
-_Covers mcp-bastion 1.4.x. Last reviewed 2026-11-03._
+_Covers mcp-bastion 1.5.x. Last reviewed 2026-11-04._
 
 This document says what mcp-bastion protects, who it protects it from, where the trust boundaries are,
 and what it deliberately does **not** protect against. The per-check mapping to STRIDE, NIST AI RMF and
