@@ -180,11 +180,24 @@ async function startServing(
     );
   }
 
+  // A second signal (Ctrl+C twice, or both a wrapper such as npx and Bastion signalled) must not
+  // start a second shutdown: closing an already-closed listener throws and the exit code turns 1.
+  let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) {
+      logger.info({ signal }, "shutdown already in progress");
+      return;
+    }
+    shuttingDown = true;
     logger.info({ signal }, "shutting down");
     if (healthTimer) clearInterval(healthTimer);
-    await closeListener();
-    await manager.closeAll();
+    try {
+      await closeListener();
+      await manager.closeAll();
+    } catch (err) {
+      logger.error({ err: (err as Error)?.message ?? String(err) }, "error during shutdown");
+      process.exit(1);
+    }
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));

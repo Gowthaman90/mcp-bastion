@@ -15,6 +15,7 @@ export interface WebhookSinkOptions {
   /** Extra request headers (e.g. an authorization token), already resolved. */
   headers?: Record<string, string>;
   batchSize: number;
+  flushIntervalMs?: number;
   timeoutMs: number;
   /** Most events held while the receiver is unreachable. Default 10 000. */
   maxQueue?: number;

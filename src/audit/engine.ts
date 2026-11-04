@@ -301,6 +301,7 @@ export class AuditEngine {
         : { args: prepareArgs(ctx.args, this.config.includeArgs, this.config.redactKeys) }),
       ...(ctx.forwardedHeaders?.length ? { forwardedHeaders: [...ctx.forwardedHeaders] } : {}),
       ...(ctx.delegation ? { delegation: ctx.delegation } : {}),
+      ...(ctx.client ? { client: ctx.client } : {}),
       ...(ctx.authorization ? { authorization: ctx.authorization } : {}),
       runId: this.runId,
       ...(this.chainV2 ? { chainVersion: 2 as const } : {}),

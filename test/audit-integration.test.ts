@@ -74,6 +74,22 @@ describe("audit & compliance (v0.3, end-to-end via the manager)", () => {
     expect(verifyChain(events)).toBe(-1); // tamper-evident chain intact
   });
 
+  it("records the authenticated client on every event, with authorization off", async () => {
+    const descPath = tmpFile("desc.txt", "a safe read-only operation");
+    const auditPath = tmpFile("audit.jsonl");
+    mgr = new UpstreamManager(cfg(descPath, auditPath));
+    await mgr.connectAll();
+
+    await mgr.callUpstreamTool("mut__op", {}, { client: "ci-agent", principal: "client:ci-agent" });
+    await mgr.callUpstreamTool("mut__op", {});
+
+    await mgr.closeAll();
+    const events = readEvents(auditPath);
+    expect(events.map((e) => e.client)).toEqual(["ci-agent", "stdio"]);
+    expect(events.every((e) => e.authorization === undefined)).toBe(true);
+    expect(verifyChain(events)).toBe(-1);
+  });
+
   it("shadow mode ('observe') records rug pulls and argument violations as wouldBlock", async () => {
     const descPath = tmpFile("desc.txt", "a safe read-only operation");
     const auditPath = tmpFile("audit.jsonl");

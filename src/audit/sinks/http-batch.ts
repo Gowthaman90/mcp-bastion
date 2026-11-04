@@ -18,6 +18,8 @@ export interface HttpBatchOptions {
   /** Extra request headers (e.g. authorization), already resolved. */
   headers?: Record<string, string>;
   batchSize: number;
+  /** Send a partial batch at least this often (ms); `0` or unset sends only full batches. */
+  flushIntervalMs?: number;
   timeoutMs: number;
   /** Most events held while the receiver is unreachable; the oldest are dropped beyond it. */
   maxQueue: number;
@@ -37,6 +39,7 @@ export abstract class HttpBatchSink implements AuditSink {
   private queue: AuditRecord[] = [];
   private inFlight: Promise<boolean> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private flushTimer: ReturnType<typeof setInterval> | undefined;
   private consecutiveFailures = 0;
   private delivered = 0;
   private dropped = 0;
@@ -44,7 +47,19 @@ export abstract class HttpBatchSink implements AuditSink {
   private lastError: string | undefined;
   private closed = false;
 
-  constructor(protected readonly opts: HttpBatchOptions) {}
+  constructor(protected readonly opts: HttpBatchOptions) {
+    const every = opts.flushIntervalMs ?? 0;
+    if (every > 0) {
+      this.flushTimer = setInterval(() => {
+        // A retry already owns delivery after a failure; it is not hurried here.
+        if (this.queue.length > 0 && !this.inFlight && !this.retryTimer && !this.closed) {
+          void this.sendNext();
+        }
+      }, every);
+      // Never keeps the process alive on its own.
+      this.flushTimer.unref?.();
+    }
+  }
 
   /** The request body for one batch. */
   protected abstract body(events: AuditRecord[]): unknown;
@@ -74,6 +89,7 @@ export abstract class HttpBatchSink implements AuditSink {
     await this.flush();
     this.closed = true;
     this.cancelRetry();
+    if (this.flushTimer) clearInterval(this.flushTimer);
     if (this.queue.length > 0) {
       this.dropped += this.queue.length;
       logger.warn(

@@ -619,6 +619,11 @@ const httpSinkFields = {
    */
   headersEnv: z.record(z.string(), z.string().min(1)).optional(),
   batchSize: z.number().int().positive().default(20),
+  /**
+   * Send whatever is queued at least this often, even below `batchSize`, so a quiet gateway's events
+   * don't wait in memory. `0` sends only full batches (and at shutdown).
+   */
+  flushIntervalMs: z.number().int().nonnegative().default(5_000),
   timeoutMs: z.number().int().positive().default(5_000),
   /** Most events held while the receiver is unreachable; the oldest are dropped (and counted) beyond it. */
   maxQueue: z.number().int().positive().default(10_000),

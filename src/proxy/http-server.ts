@@ -366,15 +366,18 @@ export async function startHttpServer(
   const url = `http://${opts.host}:${boundPort}${opts.path}`;
   logger.info({ url, legacy: opts.legacy ?? "stateless" }, "mcp-bastion HTTP listener started");
 
+  // Idempotent: a second close() returns the first one's promise instead of closing again.
+  let closing: Promise<void> | undefined;
   return {
     url,
-    close: async () => {
-      removeTarget();
-      await handler.close().catch(() => undefined);
-      await new Promise<void>((resolve, reject) =>
-        httpServer.close((err) => (err ? reject(err) : resolve())),
-      );
-    },
+    close: () =>
+      (closing ??= (async () => {
+        removeTarget();
+        await handler.close().catch(() => undefined);
+        await new Promise<void>((resolve, reject) =>
+          httpServer.close((err) => (err ? reject(err) : resolve())),
+        );
+      })()),
   };
 }
 

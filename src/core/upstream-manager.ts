@@ -259,20 +259,27 @@ export class UpstreamManager {
       // Delegation checks run before any upstream contact, so an on-demand connect never carries
       // a token that fails them.
       await this.delegation.ensure();
-      const refused = this.delegationPreflight(target.name, name, callArgs, principal);
+      const refused = this.delegationPreflight(target.name, name, callArgs, principal, client);
       if (refused) return refused;
       // Authorization also runs before any upstream contact: a refused call never triggers an
       // on-demand connect carrying this caller's forwarded headers. MRTR retries come back through
       // here, so every round is re-authorized.
       authz = this.authorization.check(target.name, name, callArgs, client);
-      const denied = this.authorizationPreflight(target.name, name, callArgs, principal, authz);
+      const denied = this.authorizationPreflight(
+        target.name,
+        name,
+        callArgs,
+        principal,
+        client,
+        authz,
+      );
       if (denied) return denied;
       const started = Date.now();
       try {
         await target.prepareForRequest();
       } catch (err) {
         // The call was authorized but never reached the tool: record it like a failed upstream call.
-        this.recordFailedCall(target.name, name, callArgs, principal, authz, err, started);
+        this.recordFailedCall(target.name, name, callArgs, principal, client, authz, err, started);
         return textResult(this.failureText(target, name, err), true);
       }
     }
@@ -291,10 +298,17 @@ export class UpstreamManager {
 
     if (route.server !== target?.name) {
       await this.delegation.ensure();
-      const refused = this.delegationPreflight(route.server, name, callArgs, principal);
+      const refused = this.delegationPreflight(route.server, name, callArgs, principal, client);
       if (refused) return refused;
       authz = this.authorization.check(route.server, name, callArgs, client);
-      const denied = this.authorizationPreflight(route.server, name, callArgs, principal, authz);
+      const denied = this.authorizationPreflight(
+        route.server,
+        name,
+        callArgs,
+        principal,
+        client,
+        authz,
+      );
       if (denied) return denied;
     }
 
@@ -302,7 +316,7 @@ export class UpstreamManager {
     if (!upstream || !upstream.isConnected()) {
       const state = upstream?.state ?? "unknown";
       this.audit?.recordFailure(
-        this.callContext(route.server, name, callArgs, principal, authz, {
+        this.callContext(route.server, name, callArgs, principal, client, authz, {
           toolName: route.originalName,
         }),
         0,
@@ -334,7 +348,7 @@ export class UpstreamManager {
           "rejected MRTR retry: requestState custody check failed",
         );
         this.audit?.recordPreflight({
-          ...this.callContext(route.server, name, callArgs, principal, authz, {
+          ...this.callContext(route.server, name, callArgs, principal, client, authz, {
             toolName: route.originalName,
             inputResponses: opts.inputResponses,
           }),
@@ -349,7 +363,7 @@ export class UpstreamManager {
       upstreamState = opened.upstreamState === "" ? undefined : opened.upstreamState;
     }
 
-    const ctx = this.callContext(route.server, name, callArgs, principal, authz, {
+    const ctx = this.callContext(route.server, name, callArgs, principal, client, authz, {
       toolName: route.originalName,
       inputResponses: opts.inputResponses,
       requestState: upstreamState,
@@ -414,6 +428,7 @@ export class UpstreamManager {
     name: string,
     args: Record<string, unknown>,
     principal: string,
+    client: string,
     authz: AuthorizationCheck | undefined,
     extra: Partial<Pick<ToolCallContext, "toolName" | "inputResponses" | "requestState">> = {},
   ): ToolCallContext {
@@ -425,6 +440,7 @@ export class UpstreamManager {
       namespacedName: name,
       args,
       principal,
+      client,
       ...extra,
     };
     const forwarded = this.upstreams.get(server)?.presentForwardedHeaders() ?? [];
@@ -448,12 +464,13 @@ export class UpstreamManager {
     name: string,
     args: Record<string, unknown>,
     principal: string,
+    client: string,
     authz: AuthorizationCheck | undefined,
     err: unknown,
     started: number,
   ): void {
     if (!this.audit) return;
-    const ctx = this.callContext(server, name, args, principal, authz);
+    const ctx = this.callContext(server, name, args, principal, client, authz);
     if (err instanceof DelegationBlockedError) {
       this.audit.recordPreflight({ ...ctx, securityDecision: "blocked_delegation" });
       return;
@@ -471,6 +488,7 @@ export class UpstreamManager {
     name: string,
     args: Record<string, unknown>,
     principal: string,
+    client: string,
   ): ToolCallOutcome | undefined {
     const check = this.delegation.check(server);
     if (!check || check.findings.length === 0) return undefined;
@@ -492,6 +510,7 @@ export class UpstreamManager {
       namespacedName: name,
       args,
       principal,
+      client,
       ...(upstream?.presentForwardedHeaders().length
         ? { forwardedHeaders: upstream.presentForwardedHeaders() }
         : {}),
@@ -516,6 +535,7 @@ export class UpstreamManager {
     name: string,
     args: Record<string, unknown>,
     principal: string,
+    client: string,
     check: AuthorizationCheck | undefined,
   ): CallToolResult | undefined {
     if (!check || check.decision.allowed) return undefined;
@@ -540,6 +560,7 @@ export class UpstreamManager {
       namespacedName: name,
       args,
       principal,
+      client,
       ...(upstream?.presentForwardedHeaders().length
         ? { forwardedHeaders: upstream.presentForwardedHeaders() }
         : {}),
@@ -571,7 +592,14 @@ export class UpstreamManager {
     const principal = opts.principal ?? "stdio";
     const check = this.authorization.check(CONTROL_SERVER, name, args, client);
     if (!check) return run();
-    const refused = this.authorizationPreflight(CONTROL_SERVER, name, args, principal, check);
+    const refused = this.authorizationPreflight(
+      CONTROL_SERVER,
+      name,
+      args,
+      principal,
+      client,
+      check,
+    );
     if (refused) return refused;
     if (!this.audit) return run();
     const prefix = CONTROL_SERVER + this.separator;
@@ -581,6 +609,7 @@ export class UpstreamManager {
       namespacedName: name,
       args,
       principal,
+      client,
       authorization: check.record,
       ...(check.wouldBlock ? { wouldBlock: "blocked_authorization" as const } : {}),
     };

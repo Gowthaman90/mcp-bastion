@@ -71,6 +71,7 @@ function createSink(cfg: SinkConfig): AuditSink {
         url: cfg.url,
         headers: resolveSinkHeaders(`webhook:${cfg.url}`, cfg.headers, cfg.headersEnv),
         batchSize: cfg.batchSize,
+        flushIntervalMs: cfg.flushIntervalMs,
         timeoutMs: cfg.timeoutMs,
         maxQueue: cfg.maxQueue,
       });
@@ -80,6 +81,7 @@ function createSink(cfg: SinkConfig): AuditSink {
         endpoint: cfg.endpoint,
         headers: resolveSinkHeaders(`otlp:${cfg.endpoint}`, cfg.headers, cfg.headersEnv),
         batchSize: cfg.batchSize,
+        flushIntervalMs: cfg.flushIntervalMs,
         timeoutMs: cfg.timeoutMs,
         maxQueue: cfg.maxQueue,
       });

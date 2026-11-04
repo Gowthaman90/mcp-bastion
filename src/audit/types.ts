@@ -134,6 +134,11 @@ export interface AuditEvent {
   /** Who acted for whom (keyless delegation checks), on calls to an upstream with `delegation`. */
   delegation?: AuditDelegationRecord;
   /** The runtime-authorization decision, when `authorization` is enabled. */
+  /**
+   * The authenticated client that made the call: a `listen.clients` key, `default` (`listen.authToken`),
+   * `anonymous` (HTTP without a token) or `stdio`. Present whether or not `authorization` is enabled.
+   */
+  client?: string;
   authorization?: AuditAuthorizationRecord;
   /** Identifies this Bastion process run; every record of one run carries the same id. */
   runId?: string;

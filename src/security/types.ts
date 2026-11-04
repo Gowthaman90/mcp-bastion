@@ -112,6 +112,11 @@ export interface ToolCallContext {
   args: Record<string, unknown>;
   /** Calling principal (bearer-token subject hash, or `stdio`). Binds sealed requestState. */
   principal: string;
+  /**
+   * The authenticated client name: a `listen.clients` key, `default` for `listen.authToken`,
+   * `anonymous` (HTTP without a token) or `stdio`. Recorded on every audit event.
+   */
+  client?: string;
   /** MRTR retry: the client's answers to a previous `input_required` round. */
   inputResponses?: Record<string, unknown>;
   /** MRTR retry: the upstream's own continuation state, already unsealed by Bastion. */

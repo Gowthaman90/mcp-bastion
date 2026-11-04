@@ -6,7 +6,27 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-Repository and release process only. No code changes.
+Fixes from a trial behind the MCPJungle gateway. All audit changes are additive; `AUDIT_SCHEMA_VERSION`
+stays `1`.
+
+- **Every audit event names the caller.** New `client` field: the `listen.clients` name, `default`
+  (`listen.authToken`), `anonymous` (HTTP without a token) or `stdio`. Before, the caller was recorded
+  only inside the `authorization` record, so only with `authorization.enabled`.
+- **OTLP records carry the full audit event.** New attributes: `mcp.client`, `mcp.would_block`,
+  `mcp.findings`, `mcp.response_findings`, `mcp.redacted_secrets`, `mcp.authorization.effect` and
+  `.rule`, `mcp.delegation.subject` and `.verified`, `audit.seq`, `audit.run_id`, `audit.prev_hash`,
+  `audit.hash`, and `audit.event` (the whole event as JSON, as that sink's redaction left it). Before,
+  OTLP had only server, tool, decision, outcome, duration and the definition hash. **Changed:** a record
+  with `wouldBlock` (a check fired in shadow mode) is now `WARN`, not `INFO`.
+- **Fixed:** webhook and OTLP sinks sent only full batches (20 or 50 events) or at shutdown, so a
+  quiet gateway's events could wait in memory for hours and be lost in a crash. New
+  `audit.sinks[].flushIntervalMs` (default 5000) sends whatever is queued at least that often; `0`
+  keeps the old behaviour.
+- **Fixed:** a second SIGTERM or SIGINT during shutdown (Ctrl+C twice, or both a wrapper such as `npx`
+  and Bastion signalled) crashed with `ERR_SERVER_NOT_RUNNING` and exit code 1. Shutdown now runs once,
+  and closing the HTTP listener twice is harmless.
+
+Repository and release process:
 
 - **THREAT-MODEL.md:** assets, adversaries, trust boundaries, threats and mitigations, assumptions and
   non-goals.

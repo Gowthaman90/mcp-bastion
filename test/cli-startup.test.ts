@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,6 +85,56 @@ describe("CLI startup order", () => {
     expect(code).toBe(1);
     expect(output).toMatch(/authorization\.trustStructuralClaims is on: for files/);
     expect(output).toMatch(/do not link across restarts or replicas/);
+  }, 30_000);
+});
+
+describe("CLI shutdown", () => {
+  it("exits 0 when SIGTERM arrives twice (e.g. npx and Bastion both signalled)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "bastion-cli-"));
+    const config = join(dir, "bastion.json");
+    const mock = fileURLToPath(new URL("./fixtures/mock-server.mjs", import.meta.url));
+    writeFileSync(
+      config,
+      JSON.stringify({
+        servers: { mock: { command: process.execPath, args: [mock] } },
+        listen: { mode: "http", host: "127.0.0.1", port: 39873 },
+        healthCheck: { enabled: false },
+      }),
+    );
+    // Node itself with tsx as a loader: the tsx wrapper would absorb the signals.
+    const child = spawn(process.execPath, ["--import", "tsx", cli, "--config", config], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    const started = new Promise<void>((resolve) => {
+      const onData = (chunk: Buffer): void => {
+        output += chunk.toString();
+        if (output.includes("mcp-bastion started")) resolve();
+      };
+      child.stdout.on("data", onData);
+      child.stderr.on("data", onData);
+    });
+    const exited = new Promise<number | null>((resolve) =>
+      child.on("exit", (code) => resolve(code)),
+    );
+
+    await started;
+    // The second signal lands while the first shutdown is closing the listener, as when a wrapper
+    // forwards the signal a moment after the process got its own.
+    const shuttingDown = new Promise<void>((resolve) => {
+      const check = (): void => {
+        if (output.includes("shutting down")) resolve();
+        else setTimeout(check, 1);
+      };
+      check();
+    });
+    child.kill("SIGTERM");
+    await shuttingDown;
+    child.kill("SIGTERM");
+    const code = await exited;
+
+    expect(output).not.toMatch(/ERR_SERVER_NOT_RUNNING/);
+    expect(code).toBe(0);
   }, 30_000);
 });
 

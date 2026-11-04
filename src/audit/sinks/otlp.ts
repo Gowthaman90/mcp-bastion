@@ -19,6 +19,8 @@ export interface OtlpSinkOptions {
   /** Extra headers (e.g. an auth token) sent with each export. */
   headers?: Record<string, string>;
   batchSize: number;
+  /** Send a partial batch at least this often (ms); `0` or unset sends only full batches. */
+  flushIntervalMs?: number;
   timeoutMs: number;
   /** Most events held while the collector is unreachable. Default 10 000. */
   maxQueue?: number;
@@ -29,6 +31,11 @@ function attr(key: string, value: string | number): { key: string; value: unknow
   return Number.isInteger(value)
     ? { key, value: { intValue: value } }
     : { key, value: { stringValue: String(value) } };
+}
+
+/** An OTLP attribute holding a list of strings. */
+function listAttr(key: string, values: readonly string[]): { key: string; value: unknown } {
+  return { key, value: { arrayValue: { values: values.map((v) => ({ stringValue: v })) } } };
 }
 
 /** ISO timestamp → OTLP `timeUnixNano` (nanoseconds, as a string; BigInt avoids precision loss). */
@@ -73,7 +80,8 @@ export function toOtlpLogs(records: readonly AuditRecord[]): unknown {
             logRecords: records.map((record) => {
               if ("recordType" in record) return chainRecordToOtlp(record);
               const event: AuditEvent = record;
-              const isWarn = event.outcome !== "ok";
+              // A check that fired under `warn` (shadow mode) is worth a WARN even though the call ran.
+              const isWarn = event.outcome !== "ok" || event.wouldBlock !== undefined;
               const attributes: Array<{ key: string; value: unknown }> = [
                 attr("mcp.server", event.server),
                 attr("mcp.tool", event.tool),
@@ -81,7 +89,44 @@ export function toOtlpLogs(records: readonly AuditRecord[]): unknown {
                 attr("mcp.outcome", event.outcome),
                 attr("duration_ms", event.durationMs),
                 attr("trace_id", event.traceId),
+                attr("audit.seq", event.seq),
               ];
+              if (event.client) attributes.push(attr("mcp.client", event.client));
+              if (event.wouldBlock) attributes.push(attr("mcp.would_block", event.wouldBlock));
+              if (event.findings?.length) {
+                attributes.push(
+                  listAttr(
+                    "mcp.findings",
+                    event.findings.map((f) => f.rule),
+                  ),
+                );
+              }
+              if (event.responseFindings?.length) {
+                attributes.push(
+                  listAttr(
+                    "mcp.response_findings",
+                    event.responseFindings.map((f) => f.rule),
+                  ),
+                );
+              }
+              if (event.redactedSecrets) {
+                attributes.push(attr("mcp.redacted_secrets", event.redactedSecrets));
+              }
+              if (event.authorization) {
+                attributes.push(attr("mcp.authorization.effect", event.authorization.effect));
+                if (event.authorization.rule !== null) {
+                  attributes.push(attr("mcp.authorization.rule", event.authorization.rule));
+                }
+              }
+              if (event.delegation) {
+                if (event.delegation.subject !== null) {
+                  attributes.push(attr("mcp.delegation.subject", event.delegation.subject));
+                }
+                attributes.push(attr("mcp.delegation.verified", event.delegation.verified));
+              }
+              if (event.runId) attributes.push(attr("audit.run_id", event.runId));
+              if (event.prevHash) attributes.push(attr("audit.prev_hash", event.prevHash));
+              if (event.hash) attributes.push(attr("audit.hash", event.hash));
               if (event.definitionHash) {
                 attributes.push(attr("mcp.definition_hash", event.definitionHash));
               }
@@ -91,6 +136,9 @@ export function toOtlpLogs(records: readonly AuditRecord[]): unknown {
               for (const control of event.frameworks.owaspLlm) {
                 attributes.push(attr("compliance.owasp_llm", control));
               }
+              // The whole event as this sink's redaction left it, so a collector export can be
+              // checked with `mcp-bastion audit verify` like a file sink's log.
+              attributes.push(attr("audit.event", JSON.stringify(event)));
               return {
                 timeUnixNano: toUnixNano(event.ts),
                 severityNumber: isWarn ? 13 : 9, // WARN : INFO
@@ -117,6 +165,7 @@ export class OtlpSink extends HttpBatchSink {
       url,
       headers: opts.headers,
       batchSize: opts.batchSize,
+      flushIntervalMs: opts.flushIntervalMs,
       timeoutMs: opts.timeoutMs,
       maxQueue: opts.maxQueue ?? 10_000,
     });

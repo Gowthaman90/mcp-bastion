@@ -298,6 +298,7 @@ only standard MCP calls:
 | `audit.sinks[].headersEnv`                | map                                 | —                    | `webhook`/`otlp`: header name → environment variable.                                                                        |
 | `audit.sinks[].allowInsecureTransport`    | boolean                             | `false`              | `webhook`/`otlp`: allow plain HTTP to a non-loopback host.                                                                   |
 | `audit.sinks[].maxQueue`                  | number                              | `10000`              | `webhook`/`otlp`: events held while the receiver is down.                                                                    |
+| `audit.sinks[].flushIntervalMs`           | number                              | `5000`               | `webhook`/`otlp`: send a partial batch at least this often (ms); `0` sends only full batches.                                |
 | `audit.checkpoint`                        | object                              | —                    | Signed checkpoints: `privateKeyFile`, `everyEvents` (100), `everySeconds` (60), `stateFile`, `sinks`.                        |
 
 ## Transports
@@ -620,8 +621,9 @@ refused by the security layer or by [authorization](#runtime-authorization):
 }
 ```
 
-**Events.** Each event names the server, tool, decision (`allowed`, `blocked_rug_pull`,
-`blocked_authorization`, …), outcome, findings with their `kind`, the `authorization` record (with the
+**Events.** Each event names the server, tool, the authenticated `client` (a `listen.clients` name,
+`default`, `anonymous` or `stdio`, recorded with or without `authorization`), decision (`allowed`,
+`blocked_rug_pull`, `blocked_authorization`, …), outcome, findings with their `kind`, the `authorization` record (with the
 deciding rule per identity) and the delegation record when present, a `runId`, and a mapping to
 **NIST AI RMF** functions and **OWASP LLM Top 10** categories. A call that passed the checks and then
 failed before reaching the tool (an on-demand connect refused, an upstream not connected) is recorded
@@ -630,10 +632,15 @@ with `outcome: "error"`. `bastion__compliance` returns aggregate totals.
 **Each sink is its own security boundary.**
 
 - `console` (stderr), `file` (JSON lines, created `0600`), `webhook` and `otlp` (OpenTelemetry logs).
+  OTLP records carry the caller (`mcp.client`), `mcp.would_block`, `mcp.findings`, the authorization
+  rule, `audit.seq` and the chain hashes as attributes, plus the whole event as `audit.event`, so a
+  collector export can be checked with `mcp-bastion audit verify`.
 - Remote sinks must use **HTTPS** unless the host is loopback. Plain HTTP to a remote host is a config
   error unless the sink sets `allowInsecureTransport: true`, which logs a warning.
 - Credentials come from the environment (`headersEnv`), not the config file; a missing variable stops
   startup.
+- Webhook and OTLP sinks send a batch when `batchSize` events are queued, or every `flushIntervalMs`
+  (default 5 s), whichever comes first.
 - A failed delivery is retried with exponential backoff instead of being dropped. Events wait in a
   bounded queue (`maxQueue`, default 10 000); beyond it the oldest are dropped and counted. Receivers can
   also spot gaps from each event's `seq`.
