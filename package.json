@@ -78,7 +78,7 @@
     "@modelcontextprotocol/node": "^2.1.2",
     "@modelcontextprotocol/server": "^2.4.0",
     "commander": "^12.1.0",
-    "jose": "6.2.3",
+    "jose": "6.2.15",
     "pino": "^10.4.0",
     "zod": "^4.6.7"
   },
