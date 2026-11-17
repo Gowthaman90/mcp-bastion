@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Dependencies
+
+- `jose` 6.2.3 → 6.2.15, still pinned exactly. The exported `DelegationKeySet` type is now declared as
+  the plain key resolver that `compactVerify` takes, instead of jose's `LocalJWKSet` type, which gained
+  extra properties in jose 6.2.14. Any function that returns a key for a token header still fits it.
+- Lockfile: hono 4.13.18, through the MCP SDK (five advisories fixed). Fresh installs of 1.5.0 already
+  resolved a fixed version.
+- CI: CodeQL Action 4.39.3.
+
 ## [1.5.0] - 2026-11-04
 
 Fixes from a trial behind the MCPJungle gateway. All audit changes are additive; `AUDIT_SCHEMA_VERSION`

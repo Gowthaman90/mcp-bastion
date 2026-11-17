@@ -28,6 +28,7 @@ import {
   createRemoteJWKSet,
   type JSONWebKeySet,
   type CryptoKey,
+  type FlattenedJWSInput,
   type JWSHeaderParameters,
 } from "jose";
 
@@ -84,8 +85,15 @@ export interface DelegationUpstreamPolicy {
   signature?: DelegationSignatureTrust;
 }
 
-/** Resolves the verification key for a token's protected header (see {@link delegationKeySet}). */
-export type DelegationKeySet = ReturnType<typeof createLocalJWKSet>;
+/**
+ * Resolves the verification key for a token's protected header (see {@link delegationKeySet}).
+ * Declared as the plain resolver `compactVerify` takes, not as jose's `LocalJWKSet`, whose type
+ * gained extra properties in jose 6.2.14.
+ */
+export type DelegationKeySet = (
+  protectedHeader?: JWSHeaderParameters,
+  token?: FlattenedJWSInput,
+) => Promise<CryptoKey>;
 
 /** What signature mode trusts for one upstream. Public keys only. */
 export interface DelegationSignatureTrust {
