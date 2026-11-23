@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-23
+
+A maintenance release: updated dependencies and new deployment guidance. No new features or config changes.
+
 ### Documentation
 
 - New README section, [Running behind another MCP gateway](README.md#running-behind-another-mcp-gateway):
@@ -751,7 +755,8 @@ spanning three layers plus dual transports.
 - Strict TypeScript, layered architecture (`config` / `core` / `security` / `audit` / `proxy` /
   `observability` / `internal`), ESLint + Prettier, unit + end-to-end tests, and CI.
 
-[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/Gowthaman90/mcp-bastion/compare/v1.4.0...v1.4.1
