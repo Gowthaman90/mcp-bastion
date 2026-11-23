@@ -177,6 +177,11 @@ answer two questions with data:
   one replica, set `security.requestStateKey` (or `MCP_BASTION_REQUEST_STATE_KEY`) to the same value
   on every replica.
 
+- **Behind another MCP gateway:** register Bastion by its HTTP URL, not as a stdio server. A gateway
+  that starts a new stdio process per call resets Bastion's pins each time, so tool changes go
+  unnoticed. See
+  [Running behind another MCP gateway](../README.md#running-behind-another-mcp-gateway).
+
 - **Key the audit chain.** Set `MCP_BASTION_AUDIT_KEY` from your secret store. With a key, the hash
   chain is HMAC-SHA256, so someone who can edit the log file can't forge a valid chain. Without a key,
   the chain only catches accidental corruption.

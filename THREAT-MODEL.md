@@ -89,7 +89,8 @@ have made (`wouldBlock`), so a team can measure false positives before turning e
   when first pinned, or that changed while Bastion was not running, is not flagged as a rug pull. It is
   still scanned by the heuristics.
 - **Pins live in memory.** Each process (each laptop, each gateway replica) keeps its own pins, and a
-  restart re-pins the current definitions.
+  restart re-pins the current definitions. A gateway that starts a new stdio Bastion per call therefore
+  defeats pinning: run Bastion as a long-running HTTP hop there.
 - **Identities are only as good as their source.** Bastion authenticates its own bearer clients. It
   verifies delegation tokens only in signature mode. In structural mode it trusts their claims only when
   `trustStructuralClaims` is set, and it warns at start-up when it does.

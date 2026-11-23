@@ -320,6 +320,31 @@ HTTP upstreams configured without an authentication header are flagged (`authent
 `bastion__status` and warned at connect time. A custom credential header counts once it is named in
 `authHeaders`; a forwarded header always counts.
 
+### Running behind another MCP gateway
+
+Tool pins live in memory, so Bastion has to keep running to compare a definition with the one it saw
+earlier. Some gateways start a new stdio process for every call (MCPJungle 0.4.7 does). Each of those
+Bastion processes starts with empty pins, so it **can't detect a changed tool**. The pattern scans
+still run.
+
+Run Bastion as a long-running HTTP server and register its URL in the gateway:
+
+```json
+{
+  "listen": { "mode": "http", "host": "127.0.0.1", "port": 3312 },
+  "servers": { "tickets": { "command": "node", "args": ["tickets-server.mjs"] } },
+  "security": { "enforcementProfile": "observe" }
+}
+```
+
+- **Behind the gateway**, Bastion sees every tool definition the upstream sends, including changes the
+  gateway's stored tool list misses. It records the caller as `anonymous` unless the gateway sends a
+  `listen.clients` token, and then it names only the gateway.
+- **In front of the gateway**, give each client its own `listen.clients` token and Bastion names the
+  caller on every event. It sees only the tool list the gateway serves, so it can miss an upstream
+  change the gateway has not picked up.
+- To get both, run one Bastion in each position.
+
 ## Per-user identity (gateway mode)
 
 When Bastion sits between an agent and sub-agents that must act **as the signed-in user**, each

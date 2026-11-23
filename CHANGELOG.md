@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Documentation
+
+- New README section, [Running behind another MCP gateway](README.md#running-behind-another-mcp-gateway):
+  a gateway that starts a new stdio process per call resets Bastion's in-memory pins, so run Bastion as
+  a long-running HTTP hop. The adoption guide and threat model say the same.
+
 ### Dependencies
 
 - `jose` 6.2.3 → 6.2.15, still pinned exactly. The exported `DelegationKeySet` type is now declared as
@@ -13,7 +19,9 @@ All notable changes to this project are documented here. The format is based on
   extra properties in jose 6.2.14. Any function that returns a key for a token header still fits it.
 - Lockfile: hono 4.13.18, through the MCP SDK (five advisories fixed). Fresh installs of 1.5.0 already
   resolved a fixed version.
-- CI: CodeQL Action 4.39.3.
+- Dev tooling: minimatch 11 (fixes GHSA-g3hv-75wg-m249), ESLint 10.15, typescript-eslint 8.73,
+  Prettier 3.10.1.
+- CI: CodeQL Action 4.39.3, OpenSSF Scorecard action 2.6.0.
 
 ## [1.5.0] - 2026-11-04
 
